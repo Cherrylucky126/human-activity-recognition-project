@@ -5,7 +5,7 @@ from scipy.signal import find_peaks
 # --- Configuration ---
 FILE_NAME = "HAR_Filtered_Dataset.csv"  # Update to your filtered dataset filename (e.g., 50Hz or 25Hz)
 SAMPLING_FREQ = 100  # Match your dataset's sampling frequency (e.g., 50 or 25)
-WINDOW_SIZE_SEC = 2  
+WINDOW_SIZE_SEC = 8  # 4-second window size for stable IR frequency bins
 WINDOW_SIZE = int(SAMPLING_FREQ * WINDOW_SIZE_SEC)  
 OVERLAP = 0.5  
 STEP_SIZE = int(WINDOW_SIZE * (1 - OVERLAP))
@@ -15,21 +15,23 @@ def extract_features_from_window(window_imu, window_ir, fs):
     features = {}
     axis_names = ['ax', 'ay', 'az', 'gx', 'gy', 'gz']
     
-    # 1. IMU Per-Axis Features
+# 1. IMU Per-Axis Features (Fixed with zero-centering for dominant frequency)
     for i, axis in enumerate(axis_names):
         signal = window_imu[:, i]
         features[f'{axis}_mean'] = np.mean(signal)
         features[f'{axis}_std'] = np.std(signal)
         features[f'{axis}_rms'] = np.sqrt(np.mean(signal**2))
         
-        # FFT features
-        fft_vals = np.fft.rfft(signal)
+        # FFT features (Demean signal so 0 Hz gravity offset doesn't steal the argmax peak)
+        signal_centered = signal - np.mean(signal)
+        fft_vals = np.fft.rfft(signal_centered)
         fft_freqs = np.fft.rfftfreq(len(signal), d=1.0/fs)
         fft_mag = np.abs(fft_vals)
+        
         features[f'{axis}_dominant_freq'] = fft_freqs[np.argmax(fft_mag)] if len(fft_mag) > 0 else 0
         features[f'{axis}_energy'] = np.sum(fft_mag**2)
 
-    # 2. Magnitude & Correlation Features
+    # 2. Magnitude & Correlation Features (with gravity offset removed for dominant frequency)
     accel_data = window_imu[:, :3]
     gyro_data = window_imu[:, 3:]
     
@@ -39,9 +41,11 @@ def extract_features_from_window(window_imu, window_ir, fs):
     features['accel_mag_mean'] = np.mean(accel_mag)
     features['accel_mag_std'] = np.std(accel_mag)
     features['accel_mag_max'] = np.max(accel_mag)
-    features['accel_spectral_energy'] = np.sum(np.fft.rfft(accel_mag)**2)
+    features['accel_spectral_energy'] = np.sum(np.fft.rfft(accel_mag - np.mean(accel_mag))**2)
     
-    accel_fft = np.fft.rfft(accel_mag)
+    # Demean accel_mag so the 0 Hz gravity DC component doesn't steal the argmax peak
+    accel_mag_centered = accel_mag - np.mean(accel_mag)
+    accel_fft = np.fft.rfft(accel_mag_centered)
     accel_freqs = np.fft.rfftfreq(len(accel_mag), d=1.0/fs)
     features['accel_dominant_freq'] = accel_freqs[np.argmax(np.abs(accel_fft))] if len(accel_fft) > 0 else 0
     
@@ -97,8 +101,6 @@ def main():
 
     print("2. Segmenting data within strict trial boundaries and extracting features...")
     feature_list = []
-    
-    # Dynamically locate metadata column names if needed, or use standard labels
     group_cols = ['Participant', 'Activity_Label', 'Trial_Number']
     
     for keys, group in df.groupby(group_cols):
@@ -122,12 +124,24 @@ def main():
             
             feature_list.append(feats)
         
-    print("3. Saving processed feature dataset...")
     feature_df = pd.DataFrame(feature_list)
-    output_filename = "HAR_Processed_Features_100hz_2_second_window.csv"
-    feature_df.to_csv(output_filename, index=False)
+
+    print("3. Applying rolling median smoothing to rolling_bpm per trial...")
+    # Smooth rolling_bpm trial-by-trial to eliminate isolated motion noise spikes
+    smoothed_chunks = []
+    for keys, group in feature_df.groupby(group_cols):
+        g = group.copy()
+        if 'rolling_bpm' in g.columns:
+            g['rolling_bpm'] = g['rolling_bpm'].rolling(window=3, center=True, min_periods=1).median()
+        smoothed_chunks.append(g)
     
-    print(f"Successfully generated '{output_filename}' with {len(feature_df)} feature rows and {len(feature_df.columns)} columns!")
+    feature_df_smoothed = pd.concat(smoothed_chunks, ignore_index=True)
+
+    print("4. Saving processed and smoothed feature dataset...")
+    output_filename = 'C:\All Python Files\SynologyDrive\Pandas Practice\HAR_Processed_Features_100hz_8_second_window.csv'
+    feature_df_smoothed.to_csv(output_filename, index=False)
+    
+    print(f"Successfully generated '{output_filename}' with {len(feature_df_smoothed)} feature rows and {len(feature_df_smoothed.columns)} columns!")
 
 if __name__ == '__main__':
     main()
