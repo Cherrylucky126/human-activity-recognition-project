@@ -1,15 +1,19 @@
 # Live dashboard dependencies.
 #
-# scikit-learn and joblib must be able to unpickle the models in
-# data-processing/*-builds/. If those .pkl files were written with a different
-# scikit-learn version, loading them warns or fails - pin scikit-learn to the
-# version that trained them once that is known (see PR 10).
+# Versions are the ones this was developed and tested against on
+# Python 3.14. Lower bounds rather than pins, except where a version
+# mismatch is known to break something.
+#
+# scikit-learn is the one that matters: joblib has to unpickle the models
+# in data-processing/*-builds/ with a version compatible with the one that
+# wrote them. har_random_forest_100hz_4s.pkl currently fails this and
+# raises KeyError: 13 - see README, "Things to know".
 
-dash>=4.0
-plotly>=7.0
-numpy>=2.1
-pandas>=2.2
-scipy>=1.14
-scikit-learn>=1.5
-joblib>=1.4
-pyserial>=3.5
+dash>=4.0          # tested with 4.5.0
+plotly>=7.0        # tested with 7.1.0
+numpy>=2.1         # tested with 2.5.4
+pandas>=2.2        # tested with 3.1.1 - needed by the project's feature code
+scipy>=1.14        # tested with 1.18.1 - find_peaks, used by the feature code
+scikit-learn>=1.5  # tested with 1.9.1 - see the note above
+joblib>=1.4        # tested with 1.6.0
+pyserial>=3.5      # only needed to read the real device
