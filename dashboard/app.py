@@ -31,7 +31,15 @@ import time
 from dash import Dash, Input, Output, callback, ctx, no_update
 
 from config import APP_TITLE, DISPLAY_WINDOW_SEC, HOST, PORT
-from figures import line_figure
+
+TIMELINE_SECONDS = 60.0
+"""How much prediction history the timeline strip shows.
+
+A minute is about 30 windows: enough to see whether the classifier is
+steady, short enough that each block stays wide enough to hover.
+"""
+import timeline
+from figures import line_figure, probability_figure
 from layout import Ids, build_layout
 from live import LIVE
 
@@ -128,6 +136,32 @@ def update_graphs(_n_intervals):
         line_figure(history, ("ax", "ay", "az"), axes, "g"),
         line_figure(history, ("gx", "gy", "gz"), axes, "deg/s", y_zero_line=True),
     )
+
+
+@callback(
+    Output(Ids.PROBABILITY_BARS, "figure"),
+    Output(Ids.PREDICTION_TIMELINE, "children"),
+    Input(Ids.TICK, "n_intervals"),
+)
+def update_classifier_panel(_n_intervals):
+    """What the model thinks now, and what it has been thinking.
+
+    The bars show the current window's probabilities; the strip below
+    shows the recent run of predictions. The strip is the one that answers
+    "is this steady or is it flickering?", which the big activity label
+    cannot.
+    """
+    LIVE.poll()
+    classes = LIVE.classifier.classes
+    history = LIVE.prediction_history()
+    latest = history[-1][1] if history else None
+
+    figure = (
+        probability_figure(latest.probabilities, classes)
+        if latest is not None
+        else probability_figure(None, classes)
+    )
+    return figure, timeline.build(history, classes, seconds=TIMELINE_SECONDS)
 
 
 @callback(
