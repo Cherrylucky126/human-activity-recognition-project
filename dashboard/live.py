@@ -41,6 +41,7 @@ out by the buffer and the classifier work starts from them in PR 10.
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from collections import deque
@@ -104,6 +105,41 @@ number someone would quote in the report.
 """
 
 
+def default_source() -> SensorSource:
+    """The simulator, unless a serial port is named in the environment.
+
+        HAR_SERIAL_PORT=COM7 python app.py
+
+    An environment variable rather than a control on the page, because
+    which device the dashboard is reading is not something a viewer should
+    be able to change by clicking, and because the choice has to be made
+    before the first sample arrives.
+
+    If the port will not open, this falls back to the simulator and leaves
+    the reason in the returned object's ``last_error``. Refusing to start
+    would leave someone with a dead page and a traceback in a terminal
+    they may not be looking at; coming up in simulation, clearly labelled
+    "simulated" in the status strip, at least shows them a working
+    dashboard while they sort the port out.
+    """
+    port = os.environ.get("HAR_SERIAL_PORT", "").strip()
+    if not port:
+        return SimulatedSource()
+
+    try:
+        from serialsource import SerialSource
+    except ImportError:  # pragma: no cover
+        from dashboard.serialsource import SerialSource
+
+    try:
+        source = SerialSource(port)
+        source.start()
+        return source
+    except Exception as exc:  # noqa: BLE001
+        print(f"[live] could not open {port}: {exc}; falling back to the simulator")
+        return SimulatedSource()
+
+
 def _describe_age(seconds: float) -> str:
     """How long ago, in words, for the alert line.
 
@@ -131,7 +167,7 @@ class LiveState:
     """
 
     def __init__(self, source: SensorSource | None = None) -> None:
-        self.source: SensorSource = source if source is not None else SimulatedSource()
+        self.source: SensorSource = source if source is not None else default_source()
         self.buffer = SampleBuffer()
         self.detector = FallDetector()
         self.heart = HeartRateEstimator(SAMPLING_FREQ_HZ)
