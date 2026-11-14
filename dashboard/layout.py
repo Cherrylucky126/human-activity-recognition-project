@@ -168,7 +168,11 @@ def build_layout():
             html.Div(
                 className="status-strip",
                 children=[
-                    _readout("Battery", Ids.BATTERY, "%"),
+                    # No unit on the battery readout: the device sends no
+                    # battery level at all, so this shows "not reported"
+                    # rather than a number, and "not reported %" would be
+                    # nonsense. See live.battery_label().
+                    _readout("Battery", Ids.BATTERY),
                     _readout("Connection", Ids.CONNECTION),
                     _readout("Sampling rate", Ids.SAMPLE_RATE, "Hz"),
                     _readout("Heart rate", Ids.HEART_RATE, "bpm"),
@@ -236,12 +240,20 @@ def build_layout():
                     ),
                 ],
             ),
+            # The heart-rate caveat is on the page itself, not only in the
+            # report. Anyone reading a number off this screen during the
+            # demo should see, in the same glance, that it is not a
+            # clinical measurement.
             html.Footer(
                 className="footer",
-                children=html.Span(
-                    f"{APP_TITLE} · layout shell, PR 4 of 14 · no live data yet",
-                    className="muted",
-                ),
+                children=[
+                    html.Span(APP_TITLE, className="muted"),
+                    html.Span(
+                        "Heart rate is an indicative signal from an optical "
+                        "sensor, not a medical measurement.",
+                        className="muted caveat",
+                    ),
+                ],
             ),
         ],
     )

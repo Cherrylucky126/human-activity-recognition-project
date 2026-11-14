@@ -46,12 +46,16 @@ import time
 
 try:  # running from inside dashboard/, as app.py does
     from buffer import SampleBuffer
+    from config import SAMPLING_FREQ_HZ
     from datasource import SensorSource, SimulatedSource
     from falldetection import FallDetector
+    from vitals import HeartRateEstimator
 except ImportError:  # pragma: no cover - imported as a package instead
     from dashboard.buffer import SampleBuffer
+    from dashboard.config import SAMPLING_FREQ_HZ
     from dashboard.datasource import SensorSource, SimulatedSource
     from dashboard.falldetection import FallDetector
+    from dashboard.vitals import HeartRateEstimator
 
 
 STALE_AFTER_S = 0.5
@@ -60,6 +64,22 @@ STALE_AFTER_S = 0.5
 At 100 Hz, half a second is 50 missing samples - far past a scheduling
 hiccup, and still quick enough that someone unplugging the device sees the
 status change while they are still looking at the screen.
+"""
+
+HEART_WINDOW_S = 8.0
+"""How much PPG history the heart rate estimate looks at.
+
+Long enough for a 40 BPM pulse to repeat five times, short enough that a
+real change in heart rate shows up while someone is still watching.
+"""
+
+HEART_UPDATE_INTERVAL_S = 1.0
+"""How often the heart rate is re-estimated.
+
+Not a performance limit - the estimate is cheap. The smoothing inside
+``vitals.HeartRateEstimator`` is tuned for roughly this spacing, so
+feeding it ten times a second would make the readout much laggier than
+its smoothing constant suggests.
 """
 
 PLACEHOLDER = "--"
@@ -86,12 +106,14 @@ class LiveState:
         self.source: SensorSource = source if source is not None else SimulatedSource()
         self.buffer = SampleBuffer()
         self.detector = FallDetector()
+        self.heart = HeartRateEstimator(SAMPLING_FREQ_HZ)
 
         self._lock = threading.RLock()
         self._running = False
         self._last_sample_at: float | None = None
         self._last_error: str | None = None
         self._polls = 0
+        self._last_heart_update: float = 0.0
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -196,6 +218,48 @@ class LiveState:
         if rate is None:
             return PLACEHOLDER
         return f"{rate:.0f}"
+
+    def heart_rate_label(self) -> str:
+        """Heart rate in BPM, or ``--``.
+
+        Re-estimated about once a second rather than on every tick. Not for
+        speed - the estimate is cheap - but because the smoothing inside
+        the estimator is tuned for roughly that spacing. Feeding it ten
+        times a second would make the readout far laggier than it looks.
+
+        **Not a medical measurement.** See ``vitals.py``.
+        """
+        now = time.monotonic()
+        with self._lock:
+            due = now - self._last_heart_update >= HEART_UPDATE_INTERVAL_S
+            if due:
+                self._last_heart_update = now
+
+        if due:
+            history = self.buffer.get_recent_seconds(HEART_WINDOW_S)
+            if not history.is_empty:
+                self.heart.estimate(history["IR_Value"])
+
+        bpm = self.heart.bpm
+        return PLACEHOLDER if bpm is None else f"{bpm:.0f}"
+
+    def battery_label(self) -> str:
+        """Always ``not reported`` - the device does not send a battery level.
+
+        There is no battery telemetry anywhere in this project: the wrist
+        unit runs off an HT7833 regulator with no voltage divider into an
+        ADC pin, and the firmware directory is empty, so nothing is
+        measuring the cell.
+
+        The readout is kept on the page, showing the truth, rather than
+        removed. A missing battery panel looks like a dashboard that forgot
+        about battery; a panel saying "not reported" is a standing question
+        for whoever owns the firmware, visible every time anyone opens the
+        page. Inventing a percentage here would be the one genuinely
+        dishonest thing this dashboard could do, because it is the one
+        number nobody could check by looking at the person wearing it.
+        """
+        return "not reported"
 
     def status(self) -> dict:
         """Everything above in one dict, for the self-test and for debugging."""
@@ -310,6 +374,18 @@ def _selftest() -> int:
         "a silent link reads as stalled",
         state.connection_label() == "stalled",
         state.connection_label(),
+    )
+
+    fresh = LiveState()
+    check(
+        "heart rate is unknown before any data arrives",
+        fresh.heart_rate_label() == PLACEHOLDER,
+        fresh.heart_rate_label(),
+    )
+
+    check(
+        "battery is reported as unavailable, never as a number",
+        LiveState().battery_label() == "not reported",
     )
 
     keys = set(LiveState().status())
