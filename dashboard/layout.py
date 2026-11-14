@@ -51,9 +51,15 @@ class Ids:
     PROBABILITY_BARS = "probability-bars"
     PREDICTION_TIMELINE = "prediction-timeline"
 
-    # Fall alert (PR 12).
+    # Fall alert (PR 9 wires the banner; the rule itself is PR 12).
     FALL_BANNER = "fall-banner"
     FALL_DISMISS = "fall-dismiss"
+    FALL_DETAIL = "fall-detail"
+
+    # Demo controls (PR 9). Present only when the source is the simulator,
+    # so they can never appear in front of a real recording.
+    DEMO_ACTIVITY = "demo-activity"
+    DEMO_FALL = "demo-fall"
 
 
 PLACEHOLDER = "—"
@@ -89,27 +95,94 @@ def _readout(label, element_id, unit=""):
     )
 
 
-def build_layout():
+def _demo_bar():
+    """Controls for driving the simulator during a demonstration.
+
+    A fall banner that cannot be made to appear is a banner nobody has
+    checked. These make the alert, and every activity, reproducible in
+    front of an audience without anyone having to throw the device at the
+    floor.
+
+    The bar labels itself as simulated. Someone walking past the screen
+    should not be able to mistake a demonstration for a recording.
+    """
+    return html.Div(
+        className="demo-bar",
+        children=[
+            html.Span("Simulator", className="demo-tag"),
+            dcc.Dropdown(
+                id=Ids.DEMO_ACTIVITY,
+                options=[
+                    {"label": name.replace("_", " "), "value": name}
+                    for name in DEMO_ACTIVITIES
+                ],
+                value="sitting",
+                clearable=False,
+                className="demo-select",
+            ),
+            html.Button(
+                "Simulate a fall",
+                id=Ids.DEMO_FALL,
+                className="demo-button",
+                n_clicks=0,
+            ),
+        ],
+    )
+
+
+DEMO_ACTIVITIES = (
+    "sitting",
+    "standing",
+    "lying",
+    "walking",
+    "running",
+    "walking_upstairs",
+    "walking_downstairs",
+)
+"""The activities the simulator can play, for the demo control.
+
+Kept as a plain tuple here rather than imported from ``datasource``, so
+that building the page never depends on a sensor module being importable.
+``app.py`` checks the two agree.
+"""
+
+
+def build_layout(show_demo_controls=False):
     """Build the whole page.
 
-    Returns a Dash component tree. Nothing here is live: the interval ticks,
-    but no callback is listening to it until PR 3.
+    Parameters
+    ----------
+    show_demo_controls:
+        Add the activity selector and the "Simulate a fall" button. These
+        drive the simulator, so ``app.py`` only passes True when the source
+        actually is the simulator - they can never appear in front of a
+        real recording, where they would do nothing and imply the opposite.
     """
     return html.Div(
         className="page",
         children=[
-            # Drives every live update from PR 3 onward.
+            # Drives every live update.
             dcc.Interval(id=Ids.TICK, interval=TICK_INTERVAL_MS, n_intervals=0),
-            # Hidden until a fall is confirmed (PR 12). It sits at the top of
-            # the page because an alert nobody notices is not an alert.
+            # Hidden until a fall is confirmed. It sits at the top of the
+            # page because an alert nobody notices is not an alert.
             html.Div(
                 id=Ids.FALL_BANNER,
                 className="fall-banner hidden",
                 children=[
-                    html.Strong("Fall detected"),
+                    html.Div(
+                        children=[
+                            html.Strong("Fall detected"),
+                            html.Span(
+                                "",
+                                id=Ids.FALL_DETAIL,
+                                className="fall-detail",
+                            ),
+                        ]
+                    ),
                     html.Button("Dismiss", id=Ids.FALL_DISMISS, className="dismiss"),
                 ],
             ),
+            _demo_bar() if show_demo_controls else html.Div(),
             # Header: the one thing a person glances at.
             html.Header(
                 className="header",

@@ -229,3 +229,52 @@ body {
   font-style: italic;
   opacity: 0.85;
 }
+
+/* --- Fall banner detail --------------------------------------------------- */
+
+.fall-detail {
+  display: block;
+  margin-top: 3px;
+  font-size: 0.82rem;
+  opacity: 0.9;
+}
+
+/* --- Demo controls -------------------------------------------------------- */
+
+.demo-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 10px 14px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+}
+
+.demo-tag {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.demo-select {
+  min-width: 210px;
+  color: #15181d;
+}
+
+.demo-button {
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.demo-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}

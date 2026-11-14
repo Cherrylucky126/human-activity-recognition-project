@@ -28,7 +28,7 @@ between them collect every sample exactly once.
 
 import time
 
-from dash import Dash, Input, Output, callback
+from dash import Dash, Input, Output, callback, ctx, no_update
 
 from config import APP_TITLE, DISPLAY_WINDOW_SEC, HOST, PORT
 from figures import line_figure
@@ -36,7 +36,11 @@ from layout import Ids, build_layout
 from live import LIVE
 
 app = Dash(__name__, title=APP_TITLE)
-app.layout = build_layout()
+
+# The demo controls drive the simulator, so they are only built when the
+# source actually is the simulator. In front of a real device they would do
+# nothing while implying the opposite.
+app.layout = build_layout(show_demo_controls=LIVE.source_kind == "simulated")
 
 # Dash warns about callbacks targeting ids that do not exist. Every id in
 # layout.Ids is present from PR 4 on, so nothing is suppressed here; if a
@@ -115,6 +119,63 @@ def update_graphs(_n_intervals):
         line_figure(history, ("ax", "ay", "az"), axes, "g"),
         line_figure(history, ("gx", "gy", "gz"), axes, "deg/s", y_zero_line=True),
     )
+
+
+@callback(
+    Output(Ids.FALL_BANNER, "className"),
+    Output(Ids.FALL_DETAIL, "children"),
+    Input(Ids.TICK, "n_intervals"),
+    Input(Ids.FALL_DISMISS, "n_clicks"),
+)
+def update_fall_banner(_n_intervals, _n_clicks):
+    """Raise, describe and lower the fall alert.
+
+    One callback rather than two, because both the tick and the Dismiss
+    button write the same className. Two callbacks with the same output
+    is an error in Dash, and the version that works - the tick quietly
+    overwriting the dismissal a tenth of a second later - would be worse:
+    a banner that refuses to go away.
+
+    The alert latches in the detector until dismissed. A fall that
+    appeared for one frame while nobody was looking at the screen would
+    not be an alert.
+    """
+    if ctx.triggered_id == Ids.FALL_DISMISS:
+        LIVE.dismiss_fall()
+        return "fall-banner hidden", ""
+
+    LIVE.poll()
+    active, detail = LIVE.fall_state()
+    if not active:
+        return "fall-banner hidden", ""
+    return "fall-banner", detail
+
+
+@callback(
+    Output(Ids.DEMO_ACTIVITY, "value"),
+    Input(Ids.DEMO_ACTIVITY, "value"),
+    Input(Ids.DEMO_FALL, "n_clicks"),
+    prevent_initial_call=True,
+)
+def drive_simulator(activity, _n_clicks):
+    """Act on the demo controls.
+
+    Only reachable when the layout was built with them, which only happens
+    with a simulated source. ``LIVE`` guards the calls anyway, so a real
+    device attached mid-session cannot turn this into an exception inside
+    a callback.
+
+    The dropdown's own value is the output so the callback has somewhere
+    to write; selecting an activity leaves it unchanged, and the fall
+    button does not disturb it.
+    """
+    if ctx.triggered_id == Ids.DEMO_FALL:
+        LIVE.trigger_demo_fall()
+        return no_update
+
+    if activity:
+        LIVE.set_demo_activity(activity)
+    return no_update
 
 
 def _wall_clock():
