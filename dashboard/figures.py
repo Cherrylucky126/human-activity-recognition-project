@@ -50,6 +50,36 @@ contrast all pass in both modes. Do not substitute by eye - re-run the
 checker.
 """
 
+CLASS_COLORS = (
+    "#3987e5",  # blue
+    "#d95926",  # orange
+    "#199e70",  # green
+    "#c98500",  # yellow
+    "#d55181",  # magenta
+    "#008300",  # dark green
+)
+"""One colour per activity class, for the probability bars and timeline.
+
+Six slots of the same reference palette, validated on both card surfaces
+for adjacent pairs: lightness, chroma, colour-vision separation,
+normal-vision separation and contrast all pass in light and dark.
+
+Assigned to classes in the model's own fixed class order, never by rank.
+If colour followed "most likely" then every bar would change colour each
+time the prediction changed, and the timeline would repaint its history.
+A class keeps its colour for as long as the dashboard is open.
+"""
+
+
+def class_color(label, classes):
+    """The colour for one class, by its position in the model's class list."""
+    try:
+        index = list(classes).index(label)
+    except ValueError:
+        return AXIS_TEXT
+    return CLASS_COLORS[index % len(CLASS_COLORS)]
+
+
 GRID_COLOR = "rgba(128,128,128,0.16)"
 """Grid lines, recessive by design and theme-neutral.
 
@@ -184,6 +214,76 @@ def line_figure(history, channels, labels, unit, *, y_zero_line=False):
         "uirevision": "live",
     }
     return {"data": traces, "layout": layout}
+
+
+def probability_figure(probabilities, classes):
+    """Horizontal bars, one per activity class.
+
+    Class order is fixed - the model's own order, reversed so the first
+    class sits at the top - and never sorted by probability. Sorting by
+    value makes bars swap places every two seconds, so reading the chart
+    means re-finding the row you were looking at. A fixed order lets the
+    eye stay on one row and watch it move.
+
+    Each bar carries its own percentage as a label, which is what the
+    palette's contrast rule asks for and also what makes the difference
+    between 0.48 and 0.52 legible at all.
+    """
+    if not probabilities or not classes:
+        return empty_figure("Waiting for a prediction")
+
+    ordered = [c for c in classes if c in probabilities]
+    if not ordered:
+        return empty_figure("Waiting for a prediction")
+
+    # Plotly draws a horizontal bar chart bottom-up, so reversing puts the
+    # model's first class at the top of the panel.
+    rows = list(reversed(ordered))
+    values = [probabilities[c] * 100 for c in rows]
+    colors = [class_color(c, classes) for c in rows]
+
+    return {
+        "data": [
+            {
+                "type": "bar",
+                "orientation": "h",
+                "x": values,
+                "y": [c.replace("_", " ") for c in rows],
+                "marker": {"color": colors},
+                "text": [f"{v:.0f}%" for v in values],
+                "textposition": "outside",
+                "textfont": {"color": AXIS_TEXT, "size": 11},
+                "cliponaxis": False,
+                "hovertemplate": "%{y}: %{x:.1f}%<extra></extra>",
+                "width": 0.62,
+            }
+        ],
+        "layout": {
+            "paper_bgcolor": "rgba(0,0,0,0)",
+            "plot_bgcolor": "rgba(0,0,0,0)",
+            "margin": {"l": 86, "r": 44, "t": 4, "b": 20},
+            "showlegend": False,
+            "bargap": 0.3,
+            "xaxis": {
+                # Fixed 0-100. An auto-scaled axis would make a 3% bar
+                # look like a confident answer whenever nothing else
+                # scored.
+                "range": [0, 100],
+                "gridcolor": GRID_COLOR,
+                "zeroline": False,
+                "tickfont": {"color": AXIS_TEXT, "size": 10},
+                "ticksuffix": "%",
+                "fixedrange": True,
+            },
+            "yaxis": {
+                "tickfont": {"color": AXIS_TEXT, "size": 11},
+                "gridcolor": "rgba(0,0,0,0)",
+                "zeroline": False,
+                "fixedrange": True,
+            },
+            "uirevision": "probabilities",
+        },
+    }
 
 
 def empty_figure(message="No data yet"):

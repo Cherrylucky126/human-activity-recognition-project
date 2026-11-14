@@ -338,6 +338,16 @@ class LiveState:
             return label, PLACEHOLDER, gesture
         return label, str(latest.percent), gesture
 
+    def prediction_history(self) -> list:
+        """A snapshot copy of every remembered prediction, oldest first.
+
+        A copy, because the caller iterates it while ``poll()`` may be
+        appending from another Dash worker thread, and a deque mutated
+        mid-iteration raises.
+        """
+        with self._lock:
+            return list(self.predictions)
+
     def model_label(self) -> str:
         """Which model is actually running, for the footer.
 

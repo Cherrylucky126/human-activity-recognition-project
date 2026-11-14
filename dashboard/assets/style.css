@@ -278,3 +278,59 @@ body {
   border-color: var(--accent);
   color: var(--accent);
 }
+
+/* --- Prediction timeline -------------------------------------------------- */
+
+.tl-track {
+  display: flex;
+  gap: 2px;
+  height: 22px;
+  overflow: hidden;
+}
+
+.tl-block {
+  flex: 1 1 0;
+  min-width: 2px;
+  border-radius: 2px;
+}
+
+.tl-faded {
+  opacity: 0.4;
+}
+
+.tl-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 8px;
+}
+
+.tl-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.tl-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+/* The timeline container was sized for the PR 4 placeholder: one 28px row
+ * with its own border. Now that it holds a track plus a legend it needs to
+ * grow, or the legend is clipped and the blocks do not fill the width. */
+
+.timeline {
+  display: block;
+  height: auto;
+  padding: 0;
+  border: 0;
+  overflow: visible;
+}
+
+.tl-track {
+  width: 100%;
+}
