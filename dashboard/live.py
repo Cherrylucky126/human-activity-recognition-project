@@ -93,6 +93,21 @@ number someone would quote in the report.
 """
 
 
+def _describe_age(seconds: float) -> str:
+    """How long ago, in words, for the alert line.
+
+    Seconds while that is still meaningful, then minutes. A banner saying
+    "412 s ago" makes the reader do arithmetic to learn that the fall was
+    a while back.
+    """
+    if seconds < 60:
+        return f"{seconds:.0f} s"
+    minutes = seconds / 60
+    if minutes < 60:
+        return f"{minutes:.0f} min"
+    return f"{minutes / 60:.0f} h"
+
+
 class LiveState:
     """One sensor source, one buffer, one fall detector, and a lock.
 
@@ -267,6 +282,62 @@ class LiveState:
         gyro = "  ".join(f"{latest[axis]:+.0f}" for axis in ("gx", "gy", "gz"))
         ir = f"{latest['IR_Value']:,.0f}"
         return accel, gyro, ir, str(self.steps.steps)
+
+    def fall_state(self) -> tuple[bool, str]:
+        """Whether the alert is up, and one line describing the event.
+
+        The detail line exists because "Fall detected" alone invites the
+        question "says what?" - during a demonstration and afterwards in
+        the report. The event carries the numbers that triggered it, so
+        they are put on screen: when, how hard, how long the free fall
+        lasted.
+        """
+        active = self.detector.alert_active
+        event = self.detector.last_event
+        if not active or event is None:
+            return active, ""
+
+        # The event's own summary carries the stream's monotonic
+        # timestamps, which run to six figures and mean nothing to a
+        # reader. Rebuild the line from the same fields in terms a person
+        # watching the screen can check: how long ago, and how hard.
+        parts = [f"{event.peak_impact_g:.1f} g impact"]
+        parts.append(f"{event.free_fall_duration_s * 1000:.0f} ms free fall")
+
+        latest = self.buffer.latest_timestamp
+        if latest is not None:
+            ago = latest - event.detected_at
+            if ago >= 0:
+                parts.append(f"{_describe_age(ago)} ago")
+
+        return True, ", ".join(parts)
+
+    def dismiss_fall(self) -> None:
+        """Lower the alert. The event history is kept."""
+        self.detector.dismiss()
+
+    # -- demo controls (simulator only) ------------------------------------
+
+    def set_demo_activity(self, name: str) -> bool:
+        """Ask a simulated source to play ``name``. False if not simulated.
+
+        Guarded rather than assumed: with a real device attached this does
+        nothing and says so, instead of raising in a callback halfway
+        through a demonstration.
+        """
+        setter = getattr(self.source, "set_activity", None)
+        if setter is None:
+            return False
+        setter(name)
+        return True
+
+    def trigger_demo_fall(self) -> bool:
+        """Ask a simulated source to play a fall. False if not simulated."""
+        trigger = getattr(self.source, "trigger_fall", None)
+        if trigger is None:
+            return False
+        trigger()
+        return True
 
     def battery_label(self) -> str:
         """Always ``not reported`` - the device does not send a battery level.
