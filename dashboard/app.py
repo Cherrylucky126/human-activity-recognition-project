@@ -30,7 +30,8 @@ import time
 
 from dash import Dash, Input, Output, callback
 
-from config import APP_TITLE, HOST, PORT
+from config import APP_TITLE, DISPLAY_WINDOW_SEC, HOST, PORT
+from figures import line_figure
 from layout import Ids, build_layout
 from live import LIVE
 
@@ -92,6 +93,28 @@ def update_sensors(_n_intervals):
     """
     LIVE.poll()
     return LIVE.sensor_labels()
+
+
+@callback(
+    Output(Ids.ACCEL_GRAPH, "figure"),
+    Output(Ids.GYRO_GRAPH, "figure"),
+    Input(Ids.TICK, "n_intervals"),
+)
+def update_graphs(_n_intervals):
+    """The two live line charts.
+
+    Both are built from one read of the buffer, so the accelerometer and
+    gyroscope charts always cover the same ten seconds. Reading twice
+    would let them drift a frame apart, which looks like a lag between the
+    sensors that is not there.
+    """
+    LIVE.poll()
+    history = LIVE.buffer.get_recent_seconds(DISPLAY_WINDOW_SEC)
+    axes = ("X", "Y", "Z")
+    return (
+        line_figure(history, ("ax", "ay", "az"), axes, "g"),
+        line_figure(history, ("gx", "gy", "gz"), axes, "deg/s", y_zero_line=True),
+    )
 
 
 def _wall_clock():
