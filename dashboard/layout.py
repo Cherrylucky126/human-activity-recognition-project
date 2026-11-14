@@ -16,6 +16,7 @@ because Dash resolves these by string at runtime, not at import.
 from dash import dcc, html
 
 from config import APP_TITLE, DISPLAY_WINDOW_SEC, TICK_INTERVAL_MS
+from figures import empty_figure as _blank_figure
 
 
 class Ids:
@@ -57,40 +58,6 @@ class Ids:
 
 PLACEHOLDER = "—"
 """Shown wherever a value has no data yet, so empty regions look deliberate."""
-
-
-def _blank_figure(message="No data yet"):
-    """An empty, theme-neutral plot.
-
-    Plotly's default template paints a white canvas with visible axes, which
-    fights the dark theme and makes an empty dashboard look broken rather than
-    unfinished. Until real figures arrive in PR 8 and PR 11, every graph shows
-    this: transparent background, no axes, one muted label.
-
-    The label colour is a mid grey chosen to stay readable on both the light
-    and the dark card background, since a figure cannot read CSS variables.
-    """
-    return {
-        "data": [],
-        "layout": {
-            "paper_bgcolor": "rgba(0,0,0,0)",
-            "plot_bgcolor": "rgba(0,0,0,0)",
-            "margin": {"l": 8, "r": 8, "t": 8, "b": 8},
-            "xaxis": {"visible": False},
-            "yaxis": {"visible": False},
-            "annotations": [
-                {
-                    "text": message,
-                    "showarrow": False,
-                    "xref": "paper",
-                    "yref": "paper",
-                    "x": 0.5,
-                    "y": 0.5,
-                    "font": {"color": "#9aa3af", "size": 13},
-                }
-            ],
-        },
-    }
 
 
 def _card(title, children, class_name="card"):
