@@ -17,7 +17,7 @@ SAMPLING_FREQ = 100
 WINDOW_SIZE = 400  # 4 seconds at 100Hz
 
 print("Loading model and scaler...")
-scaler = joblib.load("har_scaler_rf.pkl")
+scaler = joblib.load("har_scaler_dt.pkl")
 model = joblib.load("har_decision_tree.pkl")
 print("Decision Tree model loaded successfully!")
 
