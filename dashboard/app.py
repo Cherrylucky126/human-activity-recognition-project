@@ -71,6 +71,29 @@ def update_status(_n_intervals):
     )
 
 
+@callback(
+    Output(Ids.ACCEL_VALUES, "children"),
+    Output(Ids.GYRO_VALUES, "children"),
+    Output(Ids.IR_VALUE, "children"),
+    Output(Ids.STEPS, "children"),
+    Input(Ids.TICK, "n_intervals"),
+)
+def update_sensors(_n_intervals):
+    """The raw sensor panel and the step count.
+
+    All four values are read in one call, so the panel cannot show three
+    numbers from one instant and a fourth from the next - which is exactly
+    the kind of inconsistency nobody notices on screen but which makes a
+    screenshot in the report wrong.
+
+    The step count is maintained in ``live.poll()`` rather than here. If it
+    were counted from whatever this callback happened to see, a dropped
+    browser frame would silently lose steps.
+    """
+    LIVE.poll()
+    return LIVE.sensor_labels()
+
+
 def _wall_clock():
     """Local time as hh:mm:ss.
 
