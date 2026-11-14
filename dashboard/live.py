@@ -1,0 +1,334 @@
+"""The live state the whole page shares.
+
+PR 5 of 14: the first PR where the dashboard actually moves.
+
+What this file is for
+---------------------
+Three modules already exist and none of them knows about the others:
+
+* ``datasource.py`` produces samples
+* ``buffer.py`` stores them and cuts them into analysis windows
+* ``falldetection.py`` watches them for a fall
+
+Something has to own one instance of each and pump samples from the first
+into the other two. That is this file, and that is all it does. It holds no
+Dash components and imports no Dash code, so it can be driven from a plain
+Python prompt - which is how the self-test at the bottom works.
+
+Why a single shared object
+--------------------------
+A Dash app answers each browser request in whatever worker thread is free.
+If every callback built its own source and buffer, each panel would show a
+different slice of a different stream. So there is exactly one
+:class:`LiveState`, created once when ``app.py`` is imported, and every
+callback reads from it.
+
+Why ``poll()`` is safe to call from anywhere
+--------------------------------------------
+Every callback calls ``LIVE.poll()`` before reading. That looks wasteful,
+but it is the simplest correct arrangement: ``poll()`` moves whatever has
+arrived into the shared buffer under a lock, so two callbacks polling in
+the same tick between them collect every sample exactly once, in order,
+and neither can see a half-written buffer. The alternative - one designated
+pumping callback - would need Dash to guarantee callback ordering, which it
+does not.
+
+What this file deliberately does not do
+---------------------------------------
+No feature extraction, no model, no training. Window objects are handed
+out by the buffer and the classifier work starts from them in PR 10.
+"""
+
+from __future__ import annotations
+
+import threading
+import time
+
+try:  # running from inside dashboard/, as app.py does
+    from buffer import SampleBuffer
+    from datasource import SensorSource, SimulatedSource
+    from falldetection import FallDetector
+except ImportError:  # pragma: no cover - imported as a package instead
+    from dashboard.buffer import SampleBuffer
+    from dashboard.datasource import SensorSource, SimulatedSource
+    from dashboard.falldetection import FallDetector
+
+
+STALE_AFTER_S = 0.5
+"""No samples for this long and the link is reported as stalled.
+
+At 100 Hz, half a second is 50 missing samples - far past a scheduling
+hiccup, and still quick enough that someone unplugging the device sees the
+status change while they are still looking at the screen.
+"""
+
+PLACEHOLDER = "--"
+"""Shown for any value that is genuinely not known yet.
+
+Never a plausible-looking stand-in. A sampling rate of "100 Hz" displayed
+because nothing has been measured yet is worse than useless: it is the
+number someone would quote in the report.
+"""
+
+
+class LiveState:
+    """One sensor source, one buffer, one fall detector, and a lock.
+
+    Parameters
+    ----------
+    source:
+        Any :class:`datasource.SensorSource`. Defaults to the simulator, so
+        the dashboard runs with no hardware attached. PR 13 passes a serial
+        source here instead and nothing else in this file changes.
+    """
+
+    def __init__(self, source: SensorSource | None = None) -> None:
+        self.source: SensorSource = source if source is not None else SimulatedSource()
+        self.buffer = SampleBuffer()
+        self.detector = FallDetector()
+
+        self._lock = threading.RLock()
+        self._running = False
+        self._last_sample_at: float | None = None
+        self._last_error: str | None = None
+        self._polls = 0
+
+    # -- lifecycle ---------------------------------------------------------
+
+    def start(self) -> None:
+        """Start the source. Safe to call more than once."""
+        with self._lock:
+            if not self._running:
+                self.source.start()
+                self._running = True
+
+    def stop(self) -> None:
+        """Stop the source. Safe to call more than once."""
+        with self._lock:
+            if self._running:
+                self.source.stop()
+                self._running = False
+
+    @property
+    def is_running(self) -> bool:
+        with self._lock:
+            return self._running
+
+    # -- the pump ----------------------------------------------------------
+
+    def poll(self) -> int:
+        """Move everything that has arrived into the buffer and detector.
+
+        Returns the number of samples stored. Starts the source on first
+        call, so a callback never has to remember to.
+
+        A source that raises is caught rather than allowed to kill the
+        callback: the dashboard then shows the link as failed, which is the
+        behaviour you want when someone pulls the USB cable mid-demo. The
+        message is kept in ``last_error`` for the status strip.
+        """
+        with self._lock:
+            if not self._running:
+                self.start()
+
+            self._polls += 1
+            try:
+                samples = self.source.read()
+            except Exception as exc:  # noqa: BLE001 - deliberately broad
+                self._last_error = f"{type(exc).__name__}: {exc}"
+                return 0
+
+            if not samples:
+                return 0
+
+            readings = [s.as_dict() for s in samples]
+            stored = self.buffer.extend(readings)
+            self.detector.update_batch(readings)
+
+            self._last_sample_at = time.monotonic()
+            self._last_error = None
+            return stored
+
+    # -- what the panels ask about -----------------------------------------
+
+    @property
+    def last_error(self) -> str | None:
+        with self._lock:
+            return self._last_error
+
+    @property
+    def source_kind(self) -> str:
+        """``"simulated"`` or ``"device"``, for the status strip."""
+        return "simulated" if isinstance(self.source, SimulatedSource) else "device"
+
+    @property
+    def seconds_since_sample(self) -> float | None:
+        with self._lock:
+            if self._last_sample_at is None:
+                return None
+            return time.monotonic() - self._last_sample_at
+
+    def connection_label(self) -> str:
+        """One short phrase for the connection readout.
+
+        Four states worth telling apart, because they need different
+        reactions from whoever is standing in front of the screen:
+        something is broken, nothing has arrived yet, data is flowing, or
+        it was flowing and stopped.
+        """
+        with self._lock:
+            if self._last_error is not None:
+                return "error"
+            if self._last_sample_at is None:
+                return "waiting"
+            if time.monotonic() - self._last_sample_at <= STALE_AFTER_S:
+                return f"live ({self.source_kind})"
+            return "stalled"
+
+    def sample_rate_label(self) -> str:
+        """The *measured* rate, or ``--``.
+
+        This is the measured value, never the configured one. If the
+        firmware is actually sending 50 Hz while ``config.py`` says 100,
+        this readout is the only place on the page that will say so.
+        """
+        rate = self.buffer.measured_sampling_rate()
+        if rate is None:
+            return PLACEHOLDER
+        return f"{rate:.0f}"
+
+    def status(self) -> dict:
+        """Everything above in one dict, for the self-test and for debugging."""
+        with self._lock:
+            return {
+                "running": self._running,
+                "source": self.source_kind,
+                "connection": self.connection_label(),
+                "sample_rate": self.sample_rate_label(),
+                "buffered": len(self.buffer),
+                "polls": self._polls,
+                "last_error": self._last_error,
+                "fall_alert": self.detector.alert_active,
+            }
+
+
+LIVE = LiveState()
+"""The one instance. ``app.py`` imports this; callbacks use it directly."""
+
+
+# ---------------------------------------------------------------------------
+# Self-test: python live.py
+# ---------------------------------------------------------------------------
+
+def _selftest() -> int:
+    print("live.py self-test")
+    failures = []
+
+    def check(label, condition, detail=""):
+        mark = "ok  " if condition else "FAIL"
+        print(f"  {mark} {label}" + (f"  ({detail})" if detail else ""))
+        if not condition:
+            failures.append(label)
+
+    state = LiveState()
+
+    check(
+        "nothing is known before the first poll",
+        state.connection_label() == "waiting"
+        and state.sample_rate_label() == PLACEHOLDER,
+        f"connection={state.connection_label()!r} rate={state.sample_rate_label()!r}",
+    )
+
+    state.poll()
+    time.sleep(0.25)
+    stored = state.poll()
+    check(
+        "poll() starts the source and stores samples",
+        state.is_running and stored > 0,
+        f"{stored} samples",
+    )
+
+    check(
+        "the link reads as live",
+        state.connection_label().startswith("live"),
+        state.connection_label(),
+    )
+
+    # Let enough samples through for a rate measurement to settle.
+    for _ in range(12):
+        time.sleep(0.05)
+        state.poll()
+    rate = state.sample_rate_label()
+    check(
+        "measured rate is near 100 Hz",
+        rate != PLACEHOLDER and 90 <= float(rate) <= 110,
+        f"{rate} Hz",
+    )
+
+    # Two threads polling at once must not lose or duplicate a sample.
+    before = state.buffer.stats.samples_received
+    errors = []
+
+    def hammer():
+        try:
+            for _ in range(40):
+                state.poll()
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=hammer) for _ in range(4)]
+    for t in threads:
+        t.start()
+    time.sleep(0.3)
+    for t in threads:
+        t.join()
+    state.poll()
+    gained = state.buffer.stats.samples_received - before
+    check(
+        "four threads polling together: no error, no out-of-order sample",
+        not errors and state.buffer.stats.samples_out_of_order == 0,
+        f"{gained} samples gained, {len(errors)} errors",
+    )
+
+    # A source that breaks must not take the callback down with it.
+    class BrokenSource(SimulatedSource):
+        def read(self):
+            raise OSError("device disconnected")
+
+    broken = LiveState(source=BrokenSource())
+    broken.poll()
+    check(
+        "a failing source is reported, not raised",
+        broken.connection_label() == "error"
+        and "device disconnected" in (broken.last_error or ""),
+        broken.connection_label(),
+    )
+
+    # A source that stops sending must stop reading as live.
+    state._last_sample_at = time.monotonic() - (STALE_AFTER_S + 0.1)
+    check(
+        "a silent link reads as stalled",
+        state.connection_label() == "stalled",
+        state.connection_label(),
+    )
+
+    keys = set(LiveState().status())
+    check(
+        "status() carries what the panels need",
+        {"running", "connection", "sample_rate", "buffered", "fall_alert"} <= keys,
+        ", ".join(sorted(keys)),
+    )
+
+    state.stop()
+    check("stop() stops the source", not state.is_running)
+
+    print()
+    if failures:
+        print(f"FAILED: {len(failures)} check(s): " + "; ".join(failures))
+        return 1
+    print("all checks passed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_selftest())
