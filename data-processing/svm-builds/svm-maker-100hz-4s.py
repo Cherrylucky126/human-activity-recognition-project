@@ -47,10 +47,40 @@ acc = accuracy_score(y_test, y_pred)
 print(f"\n--- Test Accuracy: {acc * 100:.2f}% ---")
 print("\nClassification Report:")
 print(classification_report(y_test, y_pred))
+# --- 5b. Leave-One-Subject-Out (LOSO) Evaluation Snippet ---
+from sklearn.base import clone
+from sklearn.model_selection import LeaveOneGroupOut
 
+logo = LeaveOneGroupOut()
+loso_y_true, loso_y_pred, fold_accs = [], [], {}
+
+for train_idx, test_idx in logo.split(X, y, df['Participant']):
+  subj = df['Participant'].iloc[test_idx].iloc[0]
+
+  fold_scaler = StandardScaler()
+  X_tr = fold_scaler.fit_transform(X.iloc[train_idx])
+  X_te = fold_scaler.transform(X.iloc[test_idx])
+
+  fold_model = clone(model)  # automatically copies your model + hyperparameters
+  fold_model.fit(X_tr, y.iloc[train_idx])
+  preds = fold_model.predict(X_te)
+
+  fold_accs[subj] = accuracy_score(y.iloc[test_idx], preds)
+  loso_y_true.extend(y.iloc[test_idx])
+  loso_y_pred.extend(preds)
+
+print(
+    f'\n--- LOSO Mean Accuracy: {np.mean(list(fold_accs.values())) * 100:.2f}%'
+    f' (± {np.std(list(fold_accs.values())) * 100:.2f}%) ---'
+)
+for subj, f_acc in fold_accs.items():
+  print(f'  Held-out {subj}: {f_acc * 100:.2f}%')
+
+print('\nLOSO Classification Report:')
+print(classification_report(loso_y_true, loso_y_pred))
 # 6. Save scaler and trained SVM model files
 print("6. Saving scaler and SVM model files...")
-joblib.dump(scaler, 'har_scaler_svm.pkl')
-joblib.dump(model, 'har_svm.pkl')
+joblib.dump(scaler, 'har_scaler_svm_100hz_4s.pkl')
+joblib.dump(model, 'har_svm_100hz_4s.pkl')
 
 print("Successfully exported 'har_scaler.pkl' and 'har_svm.pkl' to your working directory!")
