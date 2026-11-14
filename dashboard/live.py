@@ -43,12 +43,14 @@ from __future__ import annotations
 
 import threading
 import time
+from collections import deque
 
 try:  # running from inside dashboard/, as app.py does
     from buffer import SampleBuffer
     from config import SAMPLING_FREQ_HZ
     from datasource import SensorSource, SimulatedSource
     from falldetection import FallDetector
+    from inference import ActivityClassifier
     from pedometer import StepCounter
     from vitals import HeartRateEstimator
 except ImportError:  # pragma: no cover - imported as a package instead
@@ -56,6 +58,7 @@ except ImportError:  # pragma: no cover - imported as a package instead
     from dashboard.config import SAMPLING_FREQ_HZ
     from dashboard.datasource import SensorSource, SimulatedSource
     from dashboard.falldetection import FallDetector
+    from dashboard.inference import ActivityClassifier
     from dashboard.pedometer import StepCounter
     from dashboard.vitals import HeartRateEstimator
 
@@ -82,6 +85,14 @@ Not a performance limit - the estimate is cheap. The smoothing inside
 ``vitals.HeartRateEstimator`` is tuned for roughly this spacing, so
 feeding it ten times a second would make the readout much laggier than
 its smoothing constant suggests.
+"""
+
+PREDICTION_HISTORY = 2000
+"""How many predictions to remember for the timeline.
+
+One window every two seconds, so this is over an hour of continuous use.
+Cheap enough to keep every one rather than thinning and having the
+timeline disagree with what was actually predicted.
 """
 
 PLACEHOLDER = "--"
@@ -125,6 +136,12 @@ class LiveState:
         self.detector = FallDetector()
         self.heart = HeartRateEstimator(SAMPLING_FREQ_HZ)
         self.steps = StepCounter(SAMPLING_FREQ_HZ)
+        self.classifier = ActivityClassifier()
+
+        # Every prediction made, newest last, for the timeline strip. One
+        # window every two seconds, so an hour of running costs 1800
+        # entries - small enough to keep in full rather than sampled.
+        self.predictions: deque = deque(maxlen=PREDICTION_HISTORY)
 
         self._lock = threading.RLock()
         self._running = False
@@ -185,6 +202,16 @@ class LiveState:
             stored = self.buffer.extend(readings)
             self.detector.update_batch(readings)
             self.steps.update_batch(readings)
+            self.classifier.note_ir(r["IR_Value"] for r in readings)
+
+            # Classify every window the buffer has finished, inside the
+            # same lock. Done in a callback instead, two callbacks in one
+            # tick would each drain part of the queue and each would see
+            # only half the predictions.
+            for window in self.buffer.drain_windows():
+                prediction = self.classifier.predict(window)
+                if prediction is not None:
+                    self.predictions.append((time.time(), prediction))
 
             self._last_sample_at = time.monotonic()
             self._last_error = None
@@ -282,6 +309,46 @@ class LiveState:
         gyro = "  ".join(f"{latest[axis]:+.0f}" for axis in ("gx", "gy", "gz"))
         ir = f"{latest['IR_Value']:,.0f}"
         return accel, gyro, ir, str(self.steps.steps)
+
+    def activity_labels(self) -> tuple[str, str, str]:
+        """Current activity, confidence, and the gesture readout.
+
+        Returned together so the header cannot show an activity from one
+        window beside a confidence from another - which would be invisible
+        on screen and wrong in a screenshot.
+
+        When no model could be loaded the activity reads "unavailable"
+        and the connection to why is in ``classifier.unavailable_reason``.
+        Showing the last activity it managed before the model broke would
+        be worse than showing nothing.
+        """
+        gesture = "not implemented"
+
+        if not self.classifier.ready:
+            return "unavailable", PLACEHOLDER, gesture
+
+        with self._lock:
+            latest = self.predictions[-1][1] if self.predictions else None
+
+        if latest is None:
+            return "waiting", PLACEHOLDER, gesture
+
+        label = latest.label.replace("_", " ")
+        if latest.confidence != latest.confidence:  # NaN: no probabilities
+            return label, PLACEHOLDER, gesture
+        return label, str(latest.percent), gesture
+
+    def model_label(self) -> str:
+        """Which model is actually running, for the footer.
+
+        Named on screen because the dashboard falls back when one will not
+        load. A demonstration that silently runs the decision tree while
+        the report describes the random forest is a problem nobody catches
+        until the viva.
+        """
+        if not self.classifier.ready:
+            return f"no model: {self.classifier.unavailable_reason}"
+        return f"model: {self.classifier.name}"
 
     def fall_state(self) -> tuple[bool, str]:
         """Whether the alert is up, and one line describing the event.

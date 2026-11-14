@@ -47,6 +47,9 @@ class Ids:
     ACCEL_GRAPH = "accel-graph"
     GYRO_GRAPH = "gyro-graph"
 
+    # Classifier (PR 10).
+    MODEL_NAME = "model-name"
+
     # Classifier output (PR 11).
     PROBABILITY_BARS = "probability-bars"
     PREDICTION_TIMELINE = "prediction-timeline"
@@ -288,6 +291,11 @@ def build_layout(show_demo_controls=False):
                 className="footer",
                 children=[
                     html.Span(APP_TITLE, className="muted"),
+                    # Which model is running, named on screen. The
+                    # dashboard falls back when a model will not load, and
+                    # a demo silently running one model while the report
+                    # describes another is caught at the viva, not before.
+                    html.Span(PLACEHOLDER, id=Ids.MODEL_NAME, className="muted"),
                     html.Span(
                         "Heart rate is an indicative signal from an optical "
                         "sensor, not a medical measurement.",

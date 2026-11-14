@@ -54,6 +54,10 @@ app.layout = build_layout(show_demo_controls=LIVE.source_kind == "simulated")
     Output(Ids.SAMPLE_RATE, "children"),
     Output(Ids.HEART_RATE, "children"),
     Output(Ids.BATTERY, "children"),
+    Output(Ids.ACTIVITY, "children"),
+    Output(Ids.CONFIDENCE, "children"),
+    Output(Ids.GESTURE, "children"),
+    Output(Ids.MODEL_NAME, "children"),
     Input(Ids.TICK, "n_intervals"),
 )
 def update_status(_n_intervals):
@@ -67,12 +71,17 @@ def update_status(_n_intervals):
     visibly broken.
     """
     LIVE.poll()
+    activity, confidence, gesture = LIVE.activity_labels()
     return (
         _wall_clock(),
         LIVE.connection_label(),
         LIVE.sample_rate_label(),
         LIVE.heart_rate_label(),
         LIVE.battery_label(),
+        activity,
+        confidence,
+        gesture,
+        LIVE.model_label(),
     )
 
 
