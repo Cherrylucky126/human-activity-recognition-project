@@ -49,12 +49,14 @@ try:  # running from inside dashboard/, as app.py does
     from config import SAMPLING_FREQ_HZ
     from datasource import SensorSource, SimulatedSource
     from falldetection import FallDetector
+    from pedometer import StepCounter
     from vitals import HeartRateEstimator
 except ImportError:  # pragma: no cover - imported as a package instead
     from dashboard.buffer import SampleBuffer
     from dashboard.config import SAMPLING_FREQ_HZ
     from dashboard.datasource import SensorSource, SimulatedSource
     from dashboard.falldetection import FallDetector
+    from dashboard.pedometer import StepCounter
     from dashboard.vitals import HeartRateEstimator
 
 
@@ -107,6 +109,7 @@ class LiveState:
         self.buffer = SampleBuffer()
         self.detector = FallDetector()
         self.heart = HeartRateEstimator(SAMPLING_FREQ_HZ)
+        self.steps = StepCounter(SAMPLING_FREQ_HZ)
 
         self._lock = threading.RLock()
         self._running = False
@@ -166,6 +169,7 @@ class LiveState:
             readings = [s.as_dict() for s in samples]
             stored = self.buffer.extend(readings)
             self.detector.update_batch(readings)
+            self.steps.update_batch(readings)
 
             self._last_sample_at = time.monotonic()
             self._last_error = None
@@ -242,6 +246,27 @@ class LiveState:
 
         bpm = self.heart.bpm
         return PLACEHOLDER if bpm is None else f"{bpm:.0f}"
+
+    def sensor_labels(self) -> tuple[str, str, str, str]:
+        """The four sensor readouts: accelerometer, gyroscope, IR, steps.
+
+        All four come from one call so the panel can never show three
+        values from one instant and a fourth from the next.
+
+        Returned as formatted strings rather than numbers because the
+        formatting is part of the reading: two decimals on accelerometer
+        in g, none on gyroscope in deg/s, and a thousands separator on the
+        raw IR count, which runs to six figures and is unreadable without
+        one.
+        """
+        latest = self.buffer.latest_sample()
+        if latest is None:
+            return (PLACEHOLDER, PLACEHOLDER, PLACEHOLDER, str(self.steps.steps))
+
+        accel = "  ".join(f"{latest[axis]:+.2f}" for axis in ("ax", "ay", "az"))
+        gyro = "  ".join(f"{latest[axis]:+.0f}" for axis in ("gx", "gy", "gz"))
+        ir = f"{latest['IR_Value']:,.0f}"
+        return accel, gyro, ir, str(self.steps.steps)
 
     def battery_label(self) -> str:
         """Always ``not reported`` - the device does not send a battery level.
