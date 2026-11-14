@@ -1,0 +1,15 @@
+# Live dashboard dependencies.
+#
+# scikit-learn and joblib must be able to unpickle the models in
+# data-processing/*-builds/. If those .pkl files were written with a different
+# scikit-learn version, loading them warns or fails - pin scikit-learn to the
+# version that trained them once that is known (see PR 10).
+
+dash>=4.0
+plotly>=7.0
+numpy>=2.1
+pandas>=2.2
+scipy>=1.14
+scikit-learn>=1.5
+joblib>=1.4
+pyserial>=3.5
