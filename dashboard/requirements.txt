@@ -6,8 +6,10 @@
 #
 # scikit-learn is the one that matters: joblib has to unpickle the models
 # in data-processing/*-builds/ with a version compatible with the one that
-# wrote them. har_random_forest_100hz_4s.pkl currently fails this and
-# raises KeyError: 13 - see README, "Things to know".
+# wrote them. har_random_forest_100hz_4s.pkl used to fail this with
+# KeyError: 13; it was re-saved under 1.9.1 on 15 November 2026 and loads.
+# If you upgrade scikit-learn past 1.9.x, re-run python inference.py before
+# assuming the models still load.
 
 dash>=4.0          # tested with 4.5.0
 plotly>=7.0        # tested with 7.1.0

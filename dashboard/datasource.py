@@ -776,7 +776,10 @@ class SimulatedSource(SensorSource):
            threshold, while the wrist tumbles;
         2. **impact**, :data:`FALL_IMPACT_SEC` (85 ms): a spike peaking around
            :data:`FALL_IMPACT_PEAK_G` (3.9 g, up to ~4.4 g once the ringing
-           is added), well above the usual 2.5 g threshold;
+           is added), well above the 1.8 g detector threshold. Note the
+           simulator does not clip at 2 g the way the real sensor does -
+           see ``serialsource`` - so a simulated fall is a cleaner signal
+           than a recorded one;
         3. **settle**, :data:`FALL_SETTLE_SEC` (195 ms): a couple of small
            decaying bounces;
         4. **stillness**, :data:`FALL_STILL_SEC` (1.05 s): gravity on the

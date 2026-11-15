@@ -31,11 +31,13 @@ Three things about this that are not clean, and are not mine to fix
 These are recorded here because they change what the numbers on screen
 mean. They belong to the data-processing side of the project.
 
-**1. The random forest will not load.** ``har_random_forest_100hz_4s.pkl``
-raises ``KeyError: 13`` when unpickled under scikit-learn 1.9.1 - it was
-written by a different version. It is the model the submission checklist
-names, so the dashboard falls back to the next one that loads and says on
-screen which model it is actually running.
+**1. The random forest loads, and is the model in use.** It used to raise
+``KeyError: 13`` under scikit-learn 1.9.1, having been written by a
+different version; it was re-saved on 15 November 2026 and now unpickles
+cleanly. The fallback chain below is kept anyway - if the named model ever
+stops loading again, the dashboard drops to the next one that does and says
+on screen which model it is actually running, rather than showing nothing
+or, worse, quietly showing another model's answers.
 
 **2. The IR channel was z-scored over the whole dataset before training.**
 That happens in the feature file's ``main()``, outside the window

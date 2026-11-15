@@ -53,12 +53,17 @@ register 0x6B, to wake the MPU6050, and never writes 0x1C, so the part
 stays at its power-on default range. The divisor of 16384 confirms it.
 
 That matters more than it sounds: a real fall impact is several g, and
-the sensor cannot report more than about 2. Impacts clip. The fall
-detector's 2.5 g impact threshold is above what this hardware can
-produce along one axis, so **fall detection cannot be expected to fire on
-real recordings** as the firmware currently stands.
+the sensor cannot report more than about 2. Impacts clip, so however hard
+the floor is hit, nothing above 2 g ever leaves the device.
 
-There are two ways out and they are not equal. Writing 0x1C to select
+The fall detector was originally built to the literature's 2.5 g, which
+this hardware can never report. **On 15 November 2026 the team lowered
+the threshold to 1.8 g** so that detection can fire on real recordings at
+all; see ``falldetection.IMPACT_THRESHOLD_G`` for what that costs in
+specificity. The ceiling described here is why that number cannot go back
+above 2 g while the firmware is as it is.
+
+The alternative was not equal. Writing 0x1C to select
 plus or minus 8 g fixes the clipping - but every model in
 ``data-processing/`` was trained on data recorded at plus or minus 2 g,
 so changing the range invalidates them unless everything is retrained.
@@ -421,8 +426,8 @@ def _selftest() -> int:
 
     print()
     print(f"  accelerometer ceiling on this firmware: +/-{ACCEL_FULL_SCALE_G} g")
-    print("  (see the module docstring: impacts clip, so the fall")
-    print("   detector's 2.5 g threshold cannot be reached as it stands)")
+    print("  (see the module docstring: impacts clip at this ceiling, which")
+    print("   is why the fall threshold is 1.8 g and cannot go above 2 g)")
 
     print()
     if failures:
