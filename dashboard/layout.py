@@ -29,10 +29,14 @@ class Ids:
     ACTIVITY = "activity"
     CONFIDENCE = "confidence"
     CLOCK = "clock"
-    GESTURE = "gesture"
+
+    # No GESTURE or BATTERY id. Both readouts were removed in PR 16: the
+    # device reports neither, so both could only ever show a placeholder.
+    # live.py still has gesture_label() and battery_label() with their
+    # self-tests, so putting either readout back is adding one line here and
+    # one Output in app.py - see live.battery_label().
 
     # Status strip (PR 6).
-    BATTERY = "battery"
     CONNECTION = "connection"
     SAMPLE_RATE = "sample-rate"
     HEART_RATE = "heart-rate"
@@ -201,7 +205,6 @@ def build_layout(show_demo_controls=False):
                         className="header-side",
                         children=[
                             _readout("Confidence", Ids.CONFIDENCE, "%"),
-                            _readout("Gesture", Ids.GESTURE),
                             _readout("Time", Ids.CLOCK),
                         ],
                     ),
@@ -211,11 +214,6 @@ def build_layout(show_demo_controls=False):
             html.Div(
                 className="status-strip",
                 children=[
-                    # No unit on the battery readout: the device sends no
-                    # battery level at all, so this shows "not reported"
-                    # rather than a number, and "not reported %" would be
-                    # nonsense. See live.battery_label().
-                    _readout("Battery", Ids.BATTERY),
                     _readout("Connection", Ids.CONNECTION),
                     _readout("Sampling rate", Ids.SAMPLE_RATE, "Hz"),
                     _readout("Heart rate", Ids.HEART_RATE, "bpm"),
