@@ -16,6 +16,7 @@ because Dash resolves these by string at runtime, not at import.
 from dash import dcc, html
 
 from config import APP_TITLE, DISPLAY_WINDOW_SEC, TICK_INTERVAL_MS
+from figures import empty_figure as _blank_figure
 
 
 class Ids:
@@ -46,51 +47,26 @@ class Ids:
     ACCEL_GRAPH = "accel-graph"
     GYRO_GRAPH = "gyro-graph"
 
+    # Classifier (PR 10).
+    MODEL_NAME = "model-name"
+
     # Classifier output (PR 11).
     PROBABILITY_BARS = "probability-bars"
     PREDICTION_TIMELINE = "prediction-timeline"
 
-    # Fall alert (PR 12).
+    # Fall alert (PR 9 wires the banner; the rule itself is PR 12).
     FALL_BANNER = "fall-banner"
     FALL_DISMISS = "fall-dismiss"
+    FALL_DETAIL = "fall-detail"
+
+    # Demo controls (PR 9). Present only when the source is the simulator,
+    # so they can never appear in front of a real recording.
+    DEMO_ACTIVITY = "demo-activity"
+    DEMO_FALL = "demo-fall"
 
 
 PLACEHOLDER = "—"
 """Shown wherever a value has no data yet, so empty regions look deliberate."""
-
-
-def _blank_figure(message="No data yet"):
-    """An empty, theme-neutral plot.
-
-    Plotly's default template paints a white canvas with visible axes, which
-    fights the dark theme and makes an empty dashboard look broken rather than
-    unfinished. Until real figures arrive in PR 8 and PR 11, every graph shows
-    this: transparent background, no axes, one muted label.
-
-    The label colour is a mid grey chosen to stay readable on both the light
-    and the dark card background, since a figure cannot read CSS variables.
-    """
-    return {
-        "data": [],
-        "layout": {
-            "paper_bgcolor": "rgba(0,0,0,0)",
-            "plot_bgcolor": "rgba(0,0,0,0)",
-            "margin": {"l": 8, "r": 8, "t": 8, "b": 8},
-            "xaxis": {"visible": False},
-            "yaxis": {"visible": False},
-            "annotations": [
-                {
-                    "text": message,
-                    "showarrow": False,
-                    "xref": "paper",
-                    "yref": "paper",
-                    "x": 0.5,
-                    "y": 0.5,
-                    "font": {"color": "#9aa3af", "size": 13},
-                }
-            ],
-        },
-    }
 
 
 def _card(title, children, class_name="card"):
@@ -122,27 +98,94 @@ def _readout(label, element_id, unit=""):
     )
 
 
-def build_layout():
+def _demo_bar():
+    """Controls for driving the simulator during a demonstration.
+
+    A fall banner that cannot be made to appear is a banner nobody has
+    checked. These make the alert, and every activity, reproducible in
+    front of an audience without anyone having to throw the device at the
+    floor.
+
+    The bar labels itself as simulated. Someone walking past the screen
+    should not be able to mistake a demonstration for a recording.
+    """
+    return html.Div(
+        className="demo-bar",
+        children=[
+            html.Span("Simulator", className="demo-tag"),
+            dcc.Dropdown(
+                id=Ids.DEMO_ACTIVITY,
+                options=[
+                    {"label": name.replace("_", " "), "value": name}
+                    for name in DEMO_ACTIVITIES
+                ],
+                value="sitting",
+                clearable=False,
+                className="demo-select",
+            ),
+            html.Button(
+                "Simulate a fall",
+                id=Ids.DEMO_FALL,
+                className="demo-button",
+                n_clicks=0,
+            ),
+        ],
+    )
+
+
+DEMO_ACTIVITIES = (
+    "sitting",
+    "standing",
+    "lying",
+    "walking",
+    "running",
+    "walking_upstairs",
+    "walking_downstairs",
+)
+"""The activities the simulator can play, for the demo control.
+
+Kept as a plain tuple here rather than imported from ``datasource``, so
+that building the page never depends on a sensor module being importable.
+``app.py`` checks the two agree.
+"""
+
+
+def build_layout(show_demo_controls=False):
     """Build the whole page.
 
-    Returns a Dash component tree. Nothing here is live: the interval ticks,
-    but no callback is listening to it until PR 3.
+    Parameters
+    ----------
+    show_demo_controls:
+        Add the activity selector and the "Simulate a fall" button. These
+        drive the simulator, so ``app.py`` only passes True when the source
+        actually is the simulator - they can never appear in front of a
+        real recording, where they would do nothing and imply the opposite.
     """
     return html.Div(
         className="page",
         children=[
-            # Drives every live update from PR 3 onward.
+            # Drives every live update.
             dcc.Interval(id=Ids.TICK, interval=TICK_INTERVAL_MS, n_intervals=0),
-            # Hidden until a fall is confirmed (PR 12). It sits at the top of
-            # the page because an alert nobody notices is not an alert.
+            # Hidden until a fall is confirmed. It sits at the top of the
+            # page because an alert nobody notices is not an alert.
             html.Div(
                 id=Ids.FALL_BANNER,
                 className="fall-banner hidden",
                 children=[
-                    html.Strong("Fall detected"),
+                    html.Div(
+                        children=[
+                            html.Strong("Fall detected"),
+                            html.Span(
+                                "",
+                                id=Ids.FALL_DETAIL,
+                                className="fall-detail",
+                            ),
+                        ]
+                    ),
                     html.Button("Dismiss", id=Ids.FALL_DISMISS, className="dismiss"),
                 ],
             ),
+            _demo_bar() if show_demo_controls else html.Div(),
             # Header: the one thing a person glances at.
             html.Header(
                 className="header",
@@ -168,7 +211,11 @@ def build_layout():
             html.Div(
                 className="status-strip",
                 children=[
-                    _readout("Battery", Ids.BATTERY, "%"),
+                    # No unit on the battery readout: the device sends no
+                    # battery level at all, so this shows "not reported"
+                    # rather than a number, and "not reported %" would be
+                    # nonsense. See live.battery_label().
+                    _readout("Battery", Ids.BATTERY),
                     _readout("Connection", Ids.CONNECTION),
                     _readout("Sampling rate", Ids.SAMPLE_RATE, "Hz"),
                     _readout("Heart rate", Ids.HEART_RATE, "bpm"),
@@ -236,12 +283,25 @@ def build_layout():
                     ),
                 ],
             ),
+            # The heart-rate caveat is on the page itself, not only in the
+            # report. Anyone reading a number off this screen during the
+            # demo should see, in the same glance, that it is not a
+            # clinical measurement.
             html.Footer(
                 className="footer",
-                children=html.Span(
-                    f"{APP_TITLE} · layout shell, PR 4 of 14 · no live data yet",
-                    className="muted",
-                ),
+                children=[
+                    html.Span(APP_TITLE, className="muted"),
+                    # Which model is running, named on screen. The
+                    # dashboard falls back when a model will not load, and
+                    # a demo silently running one model while the report
+                    # describes another is caught at the viva, not before.
+                    html.Span(PLACEHOLDER, id=Ids.MODEL_NAME, className="muted"),
+                    html.Span(
+                        "Heart rate is an indicative signal from an optical "
+                        "sensor, not a medical measurement.",
+                        className="muted caveat",
+                    ),
+                ],
             ),
         ],
     )

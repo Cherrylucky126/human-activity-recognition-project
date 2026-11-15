@@ -28,14 +28,27 @@ between them collect every sample exactly once.
 
 import time
 
-from dash import Dash, Input, Output, callback
+from dash import Dash, Input, Output, callback, ctx, no_update
 
-from config import APP_TITLE, HOST, PORT
+from config import APP_TITLE, DISPLAY_WINDOW_SEC, HOST, PORT
+
+TIMELINE_SECONDS = 60.0
+"""How much prediction history the timeline strip shows.
+
+A minute is about 30 windows: enough to see whether the classifier is
+steady, short enough that each block stays wide enough to hover.
+"""
+import timeline
+from figures import line_figure, probability_figure
 from layout import Ids, build_layout
 from live import LIVE
 
 app = Dash(__name__, title=APP_TITLE)
-app.layout = build_layout()
+
+# The demo controls drive the simulator, so they are only built when the
+# source actually is the simulator. In front of a real device they would do
+# nothing while implying the opposite.
+app.layout = build_layout(show_demo_controls=LIVE.source_kind == "simulated")
 
 # Dash warns about callbacks targeting ids that do not exist. Every id in
 # layout.Ids is present from PR 4 on, so nothing is suppressed here; if a
@@ -47,6 +60,12 @@ app.layout = build_layout()
     Output(Ids.CLOCK, "children"),
     Output(Ids.CONNECTION, "children"),
     Output(Ids.SAMPLE_RATE, "children"),
+    Output(Ids.HEART_RATE, "children"),
+    Output(Ids.BATTERY, "children"),
+    Output(Ids.ACTIVITY, "children"),
+    Output(Ids.CONFIDENCE, "children"),
+    Output(Ids.GESTURE, "children"),
+    Output(Ids.MODEL_NAME, "children"),
     Input(Ids.TICK, "n_intervals"),
 )
 def update_status(_n_intervals):
@@ -60,11 +79,146 @@ def update_status(_n_intervals):
     visibly broken.
     """
     LIVE.poll()
+    activity, confidence, gesture = LIVE.activity_labels()
     return (
         _wall_clock(),
         LIVE.connection_label(),
         LIVE.sample_rate_label(),
+        LIVE.heart_rate_label(),
+        LIVE.battery_label(),
+        activity,
+        confidence,
+        gesture,
+        LIVE.model_label(),
     )
+
+
+@callback(
+    Output(Ids.ACCEL_VALUES, "children"),
+    Output(Ids.GYRO_VALUES, "children"),
+    Output(Ids.IR_VALUE, "children"),
+    Output(Ids.STEPS, "children"),
+    Input(Ids.TICK, "n_intervals"),
+)
+def update_sensors(_n_intervals):
+    """The raw sensor panel and the step count.
+
+    All four values are read in one call, so the panel cannot show three
+    numbers from one instant and a fourth from the next - which is exactly
+    the kind of inconsistency nobody notices on screen but which makes a
+    screenshot in the report wrong.
+
+    The step count is maintained in ``live.poll()`` rather than here. If it
+    were counted from whatever this callback happened to see, a dropped
+    browser frame would silently lose steps.
+    """
+    LIVE.poll()
+    return LIVE.sensor_labels()
+
+
+@callback(
+    Output(Ids.ACCEL_GRAPH, "figure"),
+    Output(Ids.GYRO_GRAPH, "figure"),
+    Input(Ids.TICK, "n_intervals"),
+)
+def update_graphs(_n_intervals):
+    """The two live line charts.
+
+    Both are built from one read of the buffer, so the accelerometer and
+    gyroscope charts always cover the same ten seconds. Reading twice
+    would let them drift a frame apart, which looks like a lag between the
+    sensors that is not there.
+    """
+    LIVE.poll()
+    history = LIVE.buffer.get_recent_seconds(DISPLAY_WINDOW_SEC)
+    axes = ("X", "Y", "Z")
+    return (
+        line_figure(history, ("ax", "ay", "az"), axes, "g"),
+        line_figure(history, ("gx", "gy", "gz"), axes, "deg/s", y_zero_line=True),
+    )
+
+
+@callback(
+    Output(Ids.PROBABILITY_BARS, "figure"),
+    Output(Ids.PREDICTION_TIMELINE, "children"),
+    Input(Ids.TICK, "n_intervals"),
+)
+def update_classifier_panel(_n_intervals):
+    """What the model thinks now, and what it has been thinking.
+
+    The bars show the current window's probabilities; the strip below
+    shows the recent run of predictions. The strip is the one that answers
+    "is this steady or is it flickering?", which the big activity label
+    cannot.
+    """
+    LIVE.poll()
+    classes = LIVE.classifier.classes
+    history = LIVE.prediction_history()
+    latest = history[-1][1] if history else None
+
+    figure = (
+        probability_figure(latest.probabilities, classes)
+        if latest is not None
+        else probability_figure(None, classes)
+    )
+    return figure, timeline.build(history, classes, seconds=TIMELINE_SECONDS)
+
+
+@callback(
+    Output(Ids.FALL_BANNER, "className"),
+    Output(Ids.FALL_DETAIL, "children"),
+    Input(Ids.TICK, "n_intervals"),
+    Input(Ids.FALL_DISMISS, "n_clicks"),
+)
+def update_fall_banner(_n_intervals, _n_clicks):
+    """Raise, describe and lower the fall alert.
+
+    One callback rather than two, because both the tick and the Dismiss
+    button write the same className. Two callbacks with the same output
+    is an error in Dash, and the version that works - the tick quietly
+    overwriting the dismissal a tenth of a second later - would be worse:
+    a banner that refuses to go away.
+
+    The alert latches in the detector until dismissed. A fall that
+    appeared for one frame while nobody was looking at the screen would
+    not be an alert.
+    """
+    if ctx.triggered_id == Ids.FALL_DISMISS:
+        LIVE.dismiss_fall()
+        return "fall-banner hidden", ""
+
+    LIVE.poll()
+    active, detail = LIVE.fall_state()
+    if not active:
+        return "fall-banner hidden", ""
+    return "fall-banner", detail
+
+
+@callback(
+    Output(Ids.DEMO_ACTIVITY, "value"),
+    Input(Ids.DEMO_ACTIVITY, "value"),
+    Input(Ids.DEMO_FALL, "n_clicks"),
+    prevent_initial_call=True,
+)
+def drive_simulator(activity, _n_clicks):
+    """Act on the demo controls.
+
+    Only reachable when the layout was built with them, which only happens
+    with a simulated source. ``LIVE`` guards the calls anyway, so a real
+    device attached mid-session cannot turn this into an exception inside
+    a callback.
+
+    The dropdown's own value is the output so the callback has somewhere
+    to write; selecting an activity leaves it unchanged, and the fall
+    button does not disturb it.
+    """
+    if ctx.triggered_id == Ids.DEMO_FALL:
+        LIVE.trigger_demo_fall()
+        return no_update
+
+    if activity:
+        LIVE.set_demo_activity(activity)
+    return no_update
 
 
 def _wall_clock():
