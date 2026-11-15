@@ -6,9 +6,36 @@ from sklearn.tree import DecisionTreeClassifier
 from sklearn.metrics import classification_report, accuracy_score
 import joblib
 
-# --- Configuration ---
 # Update this path to match where your feature extraction script saved the CSV
-DATASET_PATH = r'C:\All Python Files\SynologyDrive\Pandas Practice\HAR_Processed_Features_100hz_4_second_window.csv'
+# --- Configuration ---
+# The processed feature dataset. It is NOT in the repository: it is the
+# participants' recordings, and it is large. Get it from the project Drive
+# folder linked in the top-level README.md and save it as
+#
+#     data/HAR_Processed_Features_100hz_4_second_window.csv
+#
+# or set the HAR_DATASET environment variable to wherever you keep it.
+#
+# This used to be a single absolute path on one machine, which meant nobody
+# else could re-run the training at all.
+import os
+
+DATASET_NAME = 'HAR_Processed_Features_100hz_4_second_window.csv'
+_REPO_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, os.pardir)
+)
+DATASET_PATH = os.environ.get('HAR_DATASET') or os.path.join(
+    _REPO_ROOT, 'data', DATASET_NAME
+)
+
+if not os.path.exists(DATASET_PATH):
+    raise SystemExit(f"""
+Dataset not found:
+    {DATASET_PATH}
+
+Download {DATASET_NAME} from the Drive folder
+linked in README.md and save it to data/, or set HAR_DATASET to its location.
+""")
 
 print("1. Loading processed feature dataset...")
 df = pd.read_csv(DATASET_PATH)
