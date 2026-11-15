@@ -109,12 +109,19 @@ self-test against the 1.80 g threshold, so the margin is 0.2 g and is the
 first thing to re-check against real recordings. If the firmware is ever
 fixed to ±8 g, raise the threshold back to 2.5 g in the same change.
 
-**The random forest does not load.** `har_random_forest_100hz_4s.pkl`
-raises `KeyError: 13` under scikit-learn 1.9.1, having been written by a
-different version. It is the model the submission names. The dashboard
-falls back to the next one that loads and prints which model is running in
-the footer, so a demo cannot silently run a different model than the report
-describes.
+**The random forest loads, and is the model in use.** It was re-saved
+under scikit-learn 1.9.1 on 15 November, which fixed the `KeyError: 13` it
+used to raise. The dashboard still falls back to the next model that loads
+if anything goes wrong with it, and still prints the model actually running
+in the footer, so a demo cannot silently use a different model than the
+report describes.
+
+**The feature file is found whichever way it is spelled.** It has been
+`feature-extraction`, and is now `feature-extraction.py`. `inference.py`
+tries both, plus `feature_extraction.py`, and a self-test fails if a
+spelling exists that the loader would not find. This is not hypothetical:
+the rename on 15 November silently stopped the dashboard loading any model
+at all, and the page still looked healthy while predicting nothing.
 
 **There is no "running" class.** The models know six: downstairs, laying,
 sitting, standing, upstairs, walking. The repository has a `remove-running`

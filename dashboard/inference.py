@@ -101,9 +101,37 @@ MODEL_CANDIDATES = (
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 MODELS_ROOT = os.path.join(_HERE, os.pardir, "data-processing")
-FEATURE_MODULE_PATH = os.path.join(
-    _HERE, os.pardir, "data-preprocessing", "feature-extraction"
+# The feature-extraction file has been spelled three ways during the project:
+# no extension at all, then `feature-extraction.py`, and `feature_extraction.py`
+# is the importable name it would get if it is ever tidied up again. All three
+# are tried, in the order a reader would expect, because a rename in
+# data-preprocessing/ must never be what stops the dashboard predicting. The
+# first one that exists wins; FEATURE_MODULE_PATH keeps naming the one in use
+# so the rest of the module and the error messages are unchanged.
+FEATURE_MODULE_NAMES = (
+    "feature_extraction.py",
+    "feature-extraction.py",
+    "feature-extraction",
 )
+FEATURE_MODULE_DIR = os.path.join(_HERE, os.pardir, "data-preprocessing")
+
+
+def feature_module_path():
+    """Return the first spelling of the feature file that exists.
+
+    Falls back to the last candidate when none is present, so the caller
+    reports a missing file by a sensible name instead of raising here.
+    """
+    for name in FEATURE_MODULE_NAMES:
+        candidate = os.path.normpath(os.path.join(FEATURE_MODULE_DIR, name))
+        if os.path.exists(candidate):
+            return candidate
+    return os.path.normpath(
+        os.path.join(FEATURE_MODULE_DIR, FEATURE_MODULE_NAMES[-1])
+    )
+
+
+FEATURE_MODULE_PATH = feature_module_path()
 
 
 @dataclass(frozen=True)
@@ -123,18 +151,21 @@ class Prediction:
 def load_feature_extractor():
     """Import the project's feature function and return it.
 
-    ``data-preprocessing/feature-extraction`` has no ``.py`` extension, so
-    ``import`` cannot find it. Rather than rename someone else's file -
-    which would break whatever refers to it by name - it is loaded
-    directly by path. The file is read and executed exactly as written, so
-    the dashboard computes features with the same code the training run
-    did; renaming it later changes nothing here except the constant above.
+    The file is loaded directly by path rather than imported, because for
+    most of this project it had no ``.py`` extension and ``import`` could
+    not find it. It is now ``feature-extraction.py``, which a plain import
+    still cannot take (the hyphen is not a valid identifier), so loading by
+    path remains the right mechanism and also means the dashboard never has
+    to care which spelling is on disk - see FEATURE_MODULE_NAMES.
+
+    The file is read and executed exactly as written, so the dashboard
+    computes features with the same code the training run did.
 
     Returns ``None`` if the file is missing or will not execute, so the
     dashboard can come up and report the problem instead of refusing to
     start.
     """
-    path = os.path.normpath(FEATURE_MODULE_PATH)
+    path = feature_module_path()
     if not os.path.exists(path):
         return None
     try:
@@ -329,7 +360,25 @@ def _selftest() -> int:
     check(
         "the project's own feature function was imported, not reimplemented",
         clf.extract is not None,
-        "data-preprocessing/feature-extraction",
+        os.path.basename(feature_module_path()),
+    )
+
+    # Regression guard. On 15 Nov the feature file was renamed from
+    # `feature-extraction` to `feature-extraction.py` - a fix that had been
+    # asked for - and the dashboard silently stopped loading any model at all,
+    # because the path here was pinned to the old spelling. The page still came
+    # up and still looked healthy; it just never predicted. Renaming a file in
+    # someone else's directory must not be able to do that again.
+    _renames_ok = True
+    _real = feature_module_path()
+    for _name in FEATURE_MODULE_NAMES:
+        _candidate = os.path.normpath(os.path.join(FEATURE_MODULE_DIR, _name))
+        if os.path.exists(_candidate) and _candidate != _real:
+            _renames_ok = False
+    check(
+        "the feature file is found whichever way it is spelled",
+        os.path.exists(_real) and _renames_ok,
+        f"{os.path.basename(_real)} of {len(FEATURE_MODULE_NAMES)} spellings tried",
     )
 
     check(
