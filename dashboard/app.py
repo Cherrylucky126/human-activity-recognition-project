@@ -61,10 +61,8 @@ app.layout = build_layout(show_demo_controls=LIVE.source_kind == "simulated")
     Output(Ids.CONNECTION, "children"),
     Output(Ids.SAMPLE_RATE, "children"),
     Output(Ids.HEART_RATE, "children"),
-    Output(Ids.BATTERY, "children"),
     Output(Ids.ACTIVITY, "children"),
     Output(Ids.CONFIDENCE, "children"),
-    Output(Ids.GESTURE, "children"),
     Output(Ids.MODEL_NAME, "children"),
     Input(Ids.TICK, "n_intervals"),
 )
@@ -77,18 +75,23 @@ def update_status(_n_intervals):
     were trained on, this is the one place on the page that will say so,
     and the predictions would otherwise be quietly wrong rather than
     visibly broken.
+
+    Gesture and battery are deliberately not outputs here. The device
+    reports neither, so both could only ever display a placeholder, and a
+    row of readouts is more trustworthy when every row on it is a real
+    measurement. ``live.py`` still computes both and still tests them, so
+    restoring either is one Output here and one ``_readout`` in
+    ``layout.py``.
     """
     LIVE.poll()
-    activity, confidence, gesture = LIVE.activity_labels()
+    activity, confidence, _gesture = LIVE.activity_labels()
     return (
         _wall_clock(),
         LIVE.connection_label(),
         LIVE.sample_rate_label(),
         LIVE.heart_rate_label(),
-        LIVE.battery_label(),
         activity,
         confidence,
-        gesture,
         LIVE.model_label(),
     )
 

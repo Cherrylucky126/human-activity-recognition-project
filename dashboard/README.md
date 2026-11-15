@@ -35,7 +35,7 @@ than refusing to run.
 | Region | Shows |
 |---|---|
 | Header | Current activity, confidence, clock |
-| Status strip | Battery, link state, **measured** sampling rate, heart rate |
+| Status strip | Link state, **measured** sampling rate, heart rate |
 | Sensors | Latest accelerometer, gyroscope and IR values, step count |
 | Activity probability | Every class's probability, and a timeline of recent predictions |
 | Charts | Accelerometer and gyroscope over the last 10 seconds |
@@ -91,15 +91,23 @@ rather than only passing.
 These are real, they change what the display means, and most of them are
 not fixable inside the dashboard.
 
-**Fall detection will not fire on real recordings as the firmware
-stands.** The collector sketch never writes register `0x1C`, so the
-MPU6050 stays at its default ±2 g range. A real fall impact is several g,
-so impacts clip at about 2 g and the detector's 2.5 g threshold is never
-reached. Either the firmware selects ±8 g — which invalidates every
-trained model, all fitted on ±2 g data — or the threshold drops below 2 g
-and the alert becomes less specific. `FallDetector` already accepts every
-threshold as a keyword argument, so the second route needs no code change.
-This is a team decision, not one the dashboard should make quietly.
+**The fall threshold is 1.8 g, not the literature's 2.5 g.** The
+collector sketch never writes register `0x1C`, so the MPU6050 stays at its
+default ±2 g range and every reading is clipped at 2 g before it leaves the
+device. A real fall impact is several g but arrives as 2 g, which made the
+2.5 g threshold unreachable on any real recording — detection worked in
+simulation and could never have fired on the wrist unit.
+
+The team chose on 15 November to lower the threshold rather than set `0x1C`
+to ±8 g, because the ±8 g fix invalidates every trained model (all fitted on
+±2 g data) and there was no time to re-collect and re-train before the 17th.
+The cost is specificity: 1.8 g sits inside the range of ordinary vigorous
+movement. What holds the false-alarm rate down is that the impact stage never
+fires alone — an alert still needs a 30–150 ms free-fall dip below 0.6 g
+before it and a second of stillness after. Walking peaks at 1.60 g in the
+self-test against the 1.80 g threshold, so the margin is 0.2 g and is the
+first thing to re-check against real recordings. If the firmware is ever
+fixed to ±8 g, raise the threshold back to 2.5 g in the same change.
 
 **The random forest does not load.** `har_random_forest_100hz_4s.pkl`
 raises `KeyError: 13` under scikit-learn 1.9.1, having been written by a
@@ -129,10 +137,14 @@ median — that needs samples from after the moment it is describing.
 `vitals.py` estimates the same quantity from the past only, so the numbers
 differ from the offline ones by design.
 
-**Battery reads "not reported".** Nothing in this project measures the
-cell: the unit runs off an HT7833 with no divider into an ADC pin. The
-readout stays on the page showing the truth rather than being removed, so
-the gap stays visible.
+**There is no battery readout, and no gesture readout.** Nothing in this
+project measures the cell — the unit runs off an HT7833 with no divider into
+an ADC pin — and no gesture classifier was built. Both rows were removed in
+PR 16 rather than left showing "not reported" and "not implemented": a strip
+of readouts is easier to trust when every row on it is a real measurement.
+`live.py` still has `battery_label()` and the gesture label, with their
+self-tests, so restoring either row is one `_readout` in `layout.py` and one
+`Output` in `app.py`.
 
 **The step count is from a wrist.** Gesturing while seated adds steps;
 walking with a hand in a pocket loses them. A fall impact also registers as
