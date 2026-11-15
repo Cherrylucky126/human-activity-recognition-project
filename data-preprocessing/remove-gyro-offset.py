@@ -1,7 +1,14 @@
 import pandas as pd
-
+import os
 print("Loading CSV...")
-df = pd.read_csv(r'C:\All Python Files\SynologyDrive\Pandas Practice\no_running_with_id.csv', low_memory=False)
+DATASET_NAME = '6HAR_Processed_Features_100hz_4_second_window.csv'
+_REPO_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, os.pardir)
+)
+DATASET_PATH = os.environ.get('HAR_DATASET') or os.path.join(
+    _REPO_ROOT, 'datasets', DATASET_NAME
+)
+df = pd.read_csv(DATASET_PATH, low_memory=False)
 
 # Replace these values with the exact offsets you calculated from your flat recording file
 gyro_offsets = {
@@ -16,5 +23,5 @@ df['gy'] = df['gy'] - gyro_offsets['gy']
 df['gz'] = df['gz'] - gyro_offsets['gz']
 
 # Save the fully calibrated dataset
-df.to_csv(r'no_running_fully_calibrated.csv', index=False)
+df.to_csv('4.2HAR_Fully_Calibrated.csv', index=False)
 print("Gyroscope bias successfully subtracted and saved!")

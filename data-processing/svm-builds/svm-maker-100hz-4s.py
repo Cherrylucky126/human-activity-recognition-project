@@ -20,12 +20,12 @@ import joblib
 # else could re-run the training at all.
 import os
 
-DATASET_NAME = 'HAR_Processed_Features_100hz_4_second_window.csv'
+DATASET_NAME = '6HAR_Processed_Features_100hz_4_second_window.csv'
 _REPO_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, os.pardir)
 )
 DATASET_PATH = os.environ.get('HAR_DATASET') or os.path.join(
-    _REPO_ROOT, 'data', DATASET_NAME
+    _REPO_ROOT, 'datasets', DATASET_NAME
 )
 
 if not os.path.exists(DATASET_PATH):

@@ -1,9 +1,16 @@
 import pandas as pd
 import numpy as np
 from scipy.signal import butter, filtfilt
-
+import os
 print("Loading CSV...")
-df = pd.read_csv(r'C:\All Python Files\SynologyDrive\Pandas Practice\no_running_fully_calibrated.csv', low_memory=False)
+DATASET_NAME = '6HAR_Processed_Features_100hz_4_second_window.csv'
+_REPO_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, os.pardir)
+)
+DATASET_PATH = os.environ.get('HAR_DATASET') or os.path.join(
+    _REPO_ROOT, 'datasets', DATASET_NAME
+)
+df = pd.read_csv(DATASET_PATH, low_memory=False)
 
 group_cols = ['Participant', 'Activity_Label', 'Trial_Number']
 imu_sensor_cols = ['ax', 'ay', 'az', 'gx', 'gy', 'gz']
@@ -54,6 +61,6 @@ for keys, group in df.groupby(group_cols):
 df_filtered = pd.concat(processed_chunks, ignore_index=True)
 
 # Save the filtered dataset
-output_path = r'C:\All Python Files\SynologyDrive\Pandas Practice\HAR_Filtered_Dataset.csv'
+output_path = '5HAR_Filtered_Dataset.csv'
 df_filtered.to_csv(output_path, index=False)
 print(f"Success! Filtered dataset saved with all columns to: {output_path}")

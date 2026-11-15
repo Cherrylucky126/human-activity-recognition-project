@@ -1,11 +1,18 @@
 import numpy as np
 import pandas as pd
 from scipy.signal import find_peaks
-
+import os
 # --- Configuration ---
-FILE_NAME = r"C:\All Python Files\SynologyDrive\Pandas Practice\HAR_Filtered_Dataset_25Hz.csv"  # Update to your filtered dataset filename (e.g., 50Hz or 25Hz)
-SAMPLING_FREQ = 25  # Match your dataset's sampling frequency (e.g., 50 or 25)
-WINDOW_SIZE_SEC = 8  # 4-second window size for stable IR frequency bins
+DATASET_NAME = '5HAR_Filtered_Dataset.csv'
+_REPO_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, os.pardir)
+)
+DATASET_PATH = os.environ.get('HAR_DATASET') or os.path.join(
+    _REPO_ROOT, 'datasets', DATASET_NAME
+)
+
+SAMPLING_FREQ = 100  # Match your dataset's sampling frequency (e.g., 50 or 25)
+WINDOW_SIZE_SEC = 4  # 4-second window size for stable IR frequency bins
 WINDOW_SIZE = int(SAMPLING_FREQ * WINDOW_SIZE_SEC)  
 OVERLAP = 0.5  
 STEP_SIZE = int(WINDOW_SIZE * (1 - OVERLAP))
@@ -88,7 +95,7 @@ def extract_features_from_window(window_imu, window_ir, fs):
 
 def main():
     print("1. Loading already-filtered dataset...")
-    df = pd.read_csv(FILE_NAME, low_memory=False)
+    df = pd.read_csv(DATASET_PATH, low_memory=False)
     df.columns = df.columns.str.strip()
     
     sensor_cols = ['ax', 'ay', 'az', 'gx', 'gy', 'gz']
@@ -138,7 +145,7 @@ def main():
     feature_df_smoothed = pd.concat(smoothed_chunks, ignore_index=True)
 
     print("4. Saving processed and smoothed feature dataset...")
-    output_filename = r'C:\All Python Files\SynologyDrive\Pandas Practice\HAR_Processed_Features_25hz_8_second_window.csv'
+    output_filename = '6HAR_Processed_Features_100hz_4_second_window.csv'
     feature_df_smoothed.to_csv(output_filename, index=False)
     
     print(f"Successfully generated '{output_filename}' with {len(feature_df_smoothed)} feature rows and {len(feature_df_smoothed.columns)} columns!")

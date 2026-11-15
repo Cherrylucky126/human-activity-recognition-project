@@ -20,12 +20,12 @@ import joblib
 # else could re-run the training at all.
 import os
 
-DATASET_NAME = r"C:\All Python Files\SynologyDrive\Pandas Practice\HAR_Processed_Features_100hz_4_second_window.csv"
+DATASET_NAME = '6HAR_Processed_Features_100hz_4_second_window.csv'
 _REPO_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, os.pardir)
 )
 DATASET_PATH = os.environ.get('HAR_DATASET') or os.path.join(
-    _REPO_ROOT, 'data', DATASET_NAME
+    _REPO_ROOT, 'datasets', DATASET_NAME
 )
 
 if not os.path.exists(DATASET_PATH):
@@ -105,165 +105,10 @@ for subj, f_acc in fold_accs.items():
 
 print('\nLOSO Classification Report:')
 print(classification_report(loso_y_true, loso_y_pred))
-# --- REPLACE YOUR LOGGING BLOCK WITH THIS ---
-from datetime import datetime
-import os
-import pandas as pd
-from sklearn.metrics import classification_report, confusion_matrix
-
-# 1. Capture timestamp and original model name
-current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-model_name = type(model).__name__
-
-# 2. Convert classification reports to DataFrames and add identifier columns
-test_rep_dict = classification_report(y_test, y_pred, output_dict=True)
-loso_rep_dict = classification_report(
-    loso_y_true, loso_y_pred, output_dict=True
-)
-
-df_test_report = pd.DataFrame(test_rep_dict).transpose().reset_index()
-df_test_report = df_test_report.rename(columns={"index": "Class_Or_Average"})
-df_test_report.insert(0, "Timestamp", current_time)
-df_test_report.insert(1, "Model", model_name)
-
-df_loso_report = pd.DataFrame(loso_rep_dict).transpose().reset_index()
-df_loso_report = df_loso_report.rename(columns={"index": "Class_Or_Average"})
-df_loso_report.insert(0, "Timestamp", current_time)
-df_loso_report.insert(1, "Model", model_name)
-
-# 3. Build current run summary row
-summary_data = {
-    "Timestamp": [current_time],
-    "Model": [model_name],
-    "Test Accuracy (%)": [acc * 100],
-    "LOSO Mean Accuracy (%)": [np.mean(list(fold_accs.values())) * 100],
-    "LOSO Std (%)": [np.std(list(fold_accs.values())) * 100],
-}
-
-for subj, f_acc in fold_accs.items():
-  summary_data[f"Held-out {subj} (%)"] = [f_acc * 100]
-
-df_new_summary = pd.DataFrame(summary_data)
-excel_file = "model_evaluation_master.xlsx"
-
-
-# 4. Helper function to safely append new data to historical sheets
-def append_to_sheet(file_path, sheet_name, df_new):
-  if os.path.exists(file_path):
-    try:
-      df_existing = pd.read_excel(file_path, sheet_name=sheet_name)
-      return pd.concat([df_existing, df_new], ignore_index=True)
-    except Exception:
-      return df_new
-  return df_new
-
-
-df_all_summaries = append_to_sheet(
-    excel_file, "All_Runs_Summary", df_new_summary
-)
-df_all_test_reports = append_to_sheet(
-    excel_file, "All_Test_Reports", df_test_report
-)
-df_all_loso_reports = append_to_sheet(
-    excel_file, "All_LOSO_Reports", df_loso_report
-)
-
-# 5. Store raw confusion matrices cleanly so each run can be arranged side-by-side
-class_labels = sorted(list(set(y_test) | set(loso_y_true)))
-
-
-def make_cm_records(y_true, y_pred_vals, eval_type):
-  cm = confusion_matrix(y_true, y_pred_vals, labels=class_labels)
-  df_cm = pd.DataFrame(cm, index=class_labels, columns=class_labels)
-  df_cm.index.name = "True_Class"
-  df_cm = df_cm.reset_index()
-  df_cm.insert(0, "Timestamp", current_time)
-  df_cm.insert(1, "Model", model_name)
-  df_cm.insert(2, "Eval_Type", eval_type)
-  return df_cm
-
-
-df_cm_new = pd.concat(
-    [
-        make_cm_records(y_test, y_pred, "Split"),
-        make_cm_records(loso_y_true, loso_y_pred, "LOSO"),
-    ],
-    ignore_index=True,
-)
-
-df_all_cm_raw = append_to_sheet(excel_file, "All_CM_Raw", df_cm_new)
-
-
-# 6. Build the side-by-side grid layout matching your spreadsheet spacing
-def build_side_by_side_cm_grid(df_raw):
-  num_classes = len(class_labels)
-  block_width = num_classes + 1  # 1 label col + N predicted class cols
-  spacer_cols = 1  # 1 empty column between models (matches your screenshot)
-
-  # Preserve exact order models were run
-  runs = list(df_raw[["Timestamp", "Model"]].drop_duplicates().itertuples(index=False, name=None))
-  total_cols = 1 + len(runs) * (block_width + spacer_cols)
-
-  # Rows: Header + Split block + 1 blank row + LOSO header + LOSO block
-  total_rows = (1 + 1 + num_classes) + 1 + (1 + 1 + num_classes)
-  grid = [["" for _ in range(total_cols)] for _ in range(total_rows)]
-
-  split_start_row = 0
-  loso_start_row = num_classes + 3  # 1 blank row separating Split and LOSO
-
-  grid[split_start_row][0] = "Split"
-  grid[loso_start_row][0] = "LOSO"
-
-  for idx, (ts, m_name) in enumerate(runs):
-    col_offset = 1 + idx * (block_width + spacer_cols)
-
-    # Model name header
-    grid[split_start_row][col_offset] = m_name
-    grid[loso_start_row][col_offset] = m_name
-
-    # Column headers (Actual \ Pred + class names)
-    grid[split_start_row + 1][col_offset] = "Actual \\ Pred"
-    grid[loso_start_row + 1][col_offset] = "Actual \\ Pred"
-    for c_i, lbl in enumerate(class_labels):
-      grid[split_start_row + 1][col_offset + 1 + c_i] = lbl
-      grid[loso_start_row + 1][col_offset + 1 + c_i] = lbl
-
-    # Fill Split & LOSO rows
-    for eval_type, base_row in [("Split", split_start_row + 2), ("LOSO", loso_start_row + 2)]:
-      sub = df_raw[
-          (df_raw["Timestamp"] == ts)
-          & (df_raw["Model"] == m_name)
-          & (df_raw["Eval_Type"] == eval_type)
-      ].set_index("True_Class")
-
-      for r_i, lbl in enumerate(class_labels):
-        grid[base_row + r_i][col_offset] = lbl
-        for c_i, pred_lbl in enumerate(class_labels):
-          grid[base_row + r_i][col_offset + 1 + c_i] = int(sub.loc[lbl, pred_lbl])
-
-  return pd.DataFrame(grid)
-
-
-df_cm_layout = build_side_by_side_cm_grid(df_all_cm_raw)
-
-# 7. Save all accumulated history back into the master Excel file
-with pd.ExcelWriter(excel_file, engine="openpyxl", mode="w") as writer:
-  df_all_summaries.to_excel(writer, sheet_name="All_Runs_Summary", index=False)
-  df_all_test_reports.to_excel(writer, sheet_name="All_Test_Reports", index=False)
-  df_all_loso_reports.to_excel(writer, sheet_name="All_LOSO_Reports", index=False)
-  df_all_cm_raw.to_excel(writer, sheet_name="All_CM_Raw", index=False)
-  df_cm_layout.to_excel(
-      writer, sheet_name="All_CM_Layout", index=False, header=False
-  )
-
-print(
-    f"\n--- Successfully appended all metrics, reports, and side-by-side"
-    f" confusion matrices to '{excel_file}' ---"
-)
 
 # 6. Save scaler and trained model files
 print("6. Saving scaler and model files...")
-#joblib.dump(scaler, 'har_scaler_dt_100hz_4s.pkl')
-#joblib.dump(model, 'har_decision_tree_100hz_4s.pkl')
+joblib.dump(scaler, 'har_scaler_dt_100hz_4s.pkl')
+joblib.dump(model, 'har_decision_tree_100hz_4s.pkl')
 
 print("Successfully exported 'har_scaler.pkl' and 'har_decision_tree.pkl' to your working directory!")

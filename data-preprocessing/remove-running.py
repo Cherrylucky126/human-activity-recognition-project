@@ -1,9 +1,17 @@
 import pandas as pd
 import matplotlib
+import os
 
 print("Loading CSV...")
 # low_memory=False prevents DtypeWarning if mixed types exist across chunks
-df = pd.read_csv('raw_data', low_memory=False)
+DATASET_NAME = '6HAR_Processed_Features_100hz_4_second_window.csv'
+_REPO_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, os.pardir)
+)
+DATASET_PATH = os.environ.get('HAR_DATASET') or os.path.join(
+    _REPO_ROOT, 'datasets', DATASET_NAME
+)
+df = pd.read_csv(DATASET_PATH, low_memory=False)
 
 initial_rows = len(df)
 
@@ -16,6 +24,6 @@ df_cleaned = df[~mask]
 dropped_count = initial_rows - len(df_cleaned)
 
 # Save back to CSV
-df_cleaned.to_csv('no_running_master_data.csv', index=False)
+df_cleaned.to_csv('2HAR_No_Running_Master_Data.csv', index=False)
 
 print(f"Done! Dropped {dropped_count} rows. Cleaned file saved to data_cleaned.csv")
