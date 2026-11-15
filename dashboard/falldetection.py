@@ -172,11 +172,32 @@ FREE_FALL_MAX_DURATION_S = 0.150
 
 # --- Stage 2: impact -------------------------------------------------------
 # Units: g. SVM must spike above this for the impact stage to be satisfied.
-# ~2.5 g is the figure in the project literature review; the algorithms
-# surveyed by Bagala et al. use 2-3 g at the waist. A wrist sees *higher*
-# peaks than a waist for the same fall (it is a light limb at the end of a
-# lever), so if anything this is conservative for a wrist unit.
-IMPACT_THRESHOLD_G = 2.5
+#
+# The literature figure is ~2.5 g: the algorithms surveyed by Bagala et al.
+# use 2-3 g at the waist, and a wrist sees *higher* peaks than a waist for the
+# same fall, being a light limb at the end of a lever. On the sensor data this
+# project actually collects, that figure cannot be reached.
+#
+# The collector sketch never writes MPU6050 register 0x1C, so the accelerometer
+# stays on its default +/-2 g range. Every reading is clipped at 2 g before it
+# leaves the device. A real fall impact is several g, but it arrives here as
+# 2 g, and a 2.5 g threshold is therefore unreachable on any real recording -
+# the detector worked only in simulation, where nothing clips.
+#
+# 1.8 g is the team's decision (15 Nov), taken over the alternative of setting
+# 0x1C to +/-8 g: that is the better fix in principle, but it invalidates every
+# trained model, all of which were fitted on +/-2 g data, and there is no time
+# to re-collect and re-train before the 17th.
+#
+# The cost is specificity. 1.8 g sits inside the range of ordinary vigorous
+# movement, so stage 2 alone is weaker evidence than it was. What keeps the
+# false-alarm rate down is that stage 2 never fires alone: an alert still needs
+# a 30-150 ms free-fall dip below 0.6 g first, and a second of stillness after.
+# Hard knocks and sit-downs are rejected at stage 1, as the self-tests check.
+#
+# If the firmware is ever fixed to +/-8 g, raise this back to 2.5 g in the same
+# change - the two settings belong together.
+IMPACT_THRESHOLD_G = 1.8
 
 # Units: seconds. How long after the dip ends we keep waiting for that spike.
 # Physically the floor arrives within a few tens of milliseconds of the
@@ -306,7 +327,7 @@ class FallDetector:
 
         IDLE         --SVM drops below 0.6 g-------------> FREE_FALL
         FREE_FALL    --dip ended, lasted 30-150 ms------> AWAIT_IMPACT
-        AWAIT_IMPACT --SVM spikes past 2.5 g in 300 ms--> SETTLING
+        AWAIT_IMPACT --SVM spikes past 1.8 g in 300 ms--> SETTLING
         SETTLING     --150 ms of ringing allowed to pass-> STILLNESS
         STILLNESS    --1 s with <=20% movement----------> FALL CONFIRMED, IDLE
 
@@ -911,6 +932,43 @@ def _test_fall_variants() -> None:
           f"dips of 30-150 ms and impacts of 2.6-4.5 g all detected")
 
 
+def _test_clipped_impact() -> None:
+    """A fall as the real device actually reports it: clipped at +/-2 g.
+
+    This is the case the 1.8 g threshold exists for, and the one the old
+    2.5 g threshold could never pass. The firmware leaves the MPU6050 on its
+    default +/-2 g range, so however hard the floor is hit, nothing above 2 g
+    ever leaves the device. Here every axis is clamped the way the sensor
+    clamps it, and the fall must still be found.
+
+    If someone later raises IMPACT_THRESHOLD_G back above 2 g without also
+    fixing register 0x1C in the firmware, this test is what fails.
+    """
+    def clamp(sample: dict) -> dict:
+        out = dict(sample)
+        for axis in ("ax", "ay", "az"):
+            out[axis] = max(-2.0, min(2.0, out[axis]))
+        return out
+
+    signal = [clamp(sample) for sample in _fall(_rng(31), peak_g=6.0)]
+
+    peak = max(math.sqrt(s["ax"] ** 2 + s["ay"] ** 2 + s["az"] ** 2)
+               for s in signal)
+    assert peak <= 2.0 + 1e-9, (
+        f"clipping test: the clamped signal still peaks at {peak:.2f} g, "
+        "so it is not testing what it claims to"
+    )
+
+    detector = FallDetector()
+    assert detector.update_batch(signal), (
+        f"clipping test: a 6 g fall clipped to {peak:.2f} g was missed - "
+        f"IMPACT_THRESHOLD_G is {IMPACT_THRESHOLD_G} g, which a +/-2 g "
+        "accelerometer can never report"
+    )
+    print(f"  PASS  {'impact clipped at 2 g':<26} "
+          f"a 6 g fall clipped to {peak:.2f} g is still detected")
+
+
 def _test_rate_independence() -> None:
     """The rule must still work if the device is re-flashed at another rate.
 
@@ -951,7 +1009,7 @@ def _self_test() -> None:
     _run_case("real fall", _fall(_rng(1)), expect_fall=True,
               must_reach=FallStage.STILLNESS)
     # Walking swings the wrist below 0.6 g at the bottom of the arc, so it does
-    # enter stage 1 - it is stopped by the absence of a 2.5 g impact.
+    # enter stage 1 - it is stopped by the absence of a 1.8 g impact.
     _run_case("walking, 1.7 Hz",
               _periodic(600, 0, 1.7, 0.45, 0.20, 0.25, _rng(2)),
               expect_fall=False, must_reach=FallStage.AWAIT_IMPACT)
@@ -977,6 +1035,7 @@ def _self_test() -> None:
 
     _test_latching()
     _test_fall_variants()
+    _test_clipped_impact()
     _test_stream_handling()
     _test_rate_independence()
 
