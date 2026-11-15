@@ -3,9 +3,9 @@ import pandas as pd
 from scipy.signal import find_peaks
 
 # --- Configuration ---
-FILE_NAME = "HAR_Filtered_Dataset.csv"  # Update to your filtered dataset filename (e.g., 50Hz or 25Hz)
-SAMPLING_FREQ = 100  # Match your dataset's sampling frequency (e.g., 50 or 25)
-WINDOW_SIZE_SEC = 4  # 4-second window size for stable IR frequency bins
+FILE_NAME = r"C:\All Python Files\SynologyDrive\Pandas Practice\HAR_Filtered_Dataset_25Hz.csv"  # Update to your filtered dataset filename (e.g., 50Hz or 25Hz)
+SAMPLING_FREQ = 25  # Match your dataset's sampling frequency (e.g., 50 or 25)
+WINDOW_SIZE_SEC = 8  # 4-second window size for stable IR frequency bins
 WINDOW_SIZE = int(SAMPLING_FREQ * WINDOW_SIZE_SEC)  
 OVERLAP = 0.5  
 STEP_SIZE = int(WINDOW_SIZE * (1 - OVERLAP))
@@ -138,7 +138,7 @@ def main():
     feature_df_smoothed = pd.concat(smoothed_chunks, ignore_index=True)
 
     print("4. Saving processed and smoothed feature dataset...")
-    output_filename = 'C:\All Python Files\SynologyDrive\Pandas Practice\HAR_Processed_Features_100hz_4_second_window.csv'
+    output_filename = r'C:\All Python Files\SynologyDrive\Pandas Practice\HAR_Processed_Features_25hz_8_second_window.csv'
     feature_df_smoothed.to_csv(output_filename, index=False)
     
     print(f"Successfully generated '{output_filename}' with {len(feature_df_smoothed)} feature rows and {len(feature_df_smoothed.columns)} columns!")
