@@ -10,7 +10,7 @@ changes.
 The wire format
 ---------------
 Taken from the project's own collector sketch,
-``app/arduino-ide-data-collection``, which writes one line per sample::
+``firmware/arduino-ide-data-collection``, which writes one line per sample::
 
     ESP_BT.printf("%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%lu\\n",
                   sampleCounter++, ax, ay, az, gx, gy, gz, irValue);
