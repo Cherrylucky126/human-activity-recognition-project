@@ -85,6 +85,16 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import replace
+import ctypes
+
+VK_MEDIA_NEXT_TRACK = 0xB0
+KEYEVENTF_EXTENDEDKEY = 0x0001
+KEYEVENTF_KEYUP = 0x0002
+
+def skip_next_track():
+    # Press and release the global Windows Next Track media key
+    ctypes.windll.user32.keybd_event(VK_MEDIA_NEXT_TRACK, 0, KEYEVENTF_EXTENDEDKEY, 0)
+    ctypes.windll.user32.keybd_event(VK_MEDIA_NEXT_TRACK, 0, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, 0)
 
 try:
     from config import SAMPLING_FREQ_HZ
@@ -247,6 +257,7 @@ class SerialSource(SensorSource):
         self.dropped_samples = 0
         self.bad_lines = 0
         self.restarts = 0
+        self.double_taps = 0
         self.last_error = None
 
     @property
@@ -311,7 +322,11 @@ class SerialSource(SensorSource):
 
             if not raw:
                 continue
-
+            if raw.strip() == b"EVENT:DOUBLE_TAP":
+                self.double_taps += 1
+                skip_next_track()
+                print("Double tap detected -> Next track!", flush=True)
+                continue
             # The seven-field firmware sends no counter, so one is supplied
             # here: the next number in a locally kept sequence. Kept on the
             # reader thread, which is the only writer, so no lock is needed.
@@ -390,6 +405,7 @@ class SerialSource(SensorSource):
             "bad_lines": self.bad_lines,
             "restarts": self.restarts,
             "last_error": self.last_error,
+            "double_taps": self.double_taps,
         }
 
 
