@@ -17,8 +17,8 @@ SAMPLING_FREQ = 100
 WINDOW_SIZE = 400  # 4 seconds at 100Hz
 
 print("Loading model and scaler...")
-scaler = joblib.load("har_scaler_dt.pkl")
-model = joblib.load("har_decision_tree.pkl")
+scaler = joblib.load(r"C:\Users\prana\Documents\GitHub\human-activity-recognition-project\data-processing\decision-tree-builds\har_scaler_dt_100hz_4s.pkl")
+model = joblib.load(r"C:\Users\prana\Documents\GitHub\human-activity-recognition-project\data-processing\decision-tree-builds\har_decision_tree_100hz_4s.pkl")
 print("Decision Tree model loaded successfully!")
 
 def extract_features_from_window(window_imu, window_ir, fs):
