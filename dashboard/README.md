@@ -143,6 +143,29 @@ tell you:
 The demo bar is the reliable one: it is only ever built when the source is
 the simulator.
 
+### The unit in the team's hands sends 52 Hz, and that invalidates predictions
+
+Read this before demonstrating on the real device.
+
+The wrist unit does not run the sketch committed in `firmware/`. It sends
+seven fields instead of eight, with no sample counter, and it sends them at
+about **52 Hz** rather than 100. Both formats are read correctly, so sensor
+values and charts are live and right.
+
+Activity classification is **not** valid on it. `config.py` cuts windows of
+400 samples because 400 samples is 4 seconds at 100 Hz; at 52 Hz the same
+400 samples cover 7.7 seconds, and every model was fitted on 4. The model
+will keep returning confident labels regardless - on a motionless desk it
+read "laying, 62%".
+
+Check the sampling rate readout before trusting anything on the page. If it
+does not say 100, the predictions are meaningless no matter how reasonable
+they look. Flashing the committed 100 Hz sketch onto the unit fixes it, and
+nothing in the dashboard or the models needs to change.
+
+Full detail in [`docs/known-limitations.md`](../docs/known-limitations.md),
+section 2b.
+
 ### When it will not connect
 
 The dashboard never refuses to start over a bad port. It falls back to the
