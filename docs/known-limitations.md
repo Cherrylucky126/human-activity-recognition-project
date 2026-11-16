@@ -77,13 +77,30 @@ flattering.
 ## 3. Fall detection runs below the literature threshold
 
 **The constraint.** The collector firmware never writes MPU6050 register
-`0x1C`, so the accelerometer stays on its default +/-2 g range. Every
-reading is clipped at 2 g before it leaves the device.
+`0x1C`, so the accelerometer stays on its default +/-2 g range. Each axis
+is clipped at 2 g before it leaves the device.
 
-**What that broke.** The literature threshold for a fall impact is about
-2.5 g (Bagala et al. survey 2-3 g at the waist; a wrist sees higher peaks
-still). On this hardware, 2.5 g can never be reported. Fall detection worked
-in simulation and could not have fired on a real recording.
+**Correction, 16 November 2026.** This section previously said that 2.5 g
+"can never be reported" on this hardware. That is wrong, and the error was
+found by `dashboard/replay.py`, which feeds clipped device-format data
+through the detector. The clipping is **per axis**; the detector works on
+the vector magnitude, sqrt(ax^2 + ay^2 + az^2), which three axes at 2 g
+take to 3.46 g. A simulated fall replayed through the real clipping peaks
+at 2.86 g.
+
+**What that actually broke.** The literature threshold for a fall impact is
+about 2.5 g (Bagala et al. survey 2-3 g at the waist; a wrist sees higher
+peaks still). On this hardware that threshold is reachable for some impact
+orientations and not for others: an impact landing square on one axis gives
+exactly 2.00 g and can never cross 2.5 g, while one landing across two or
+three axes reaches 2.8-3.5 g and does. So a 2.5 g threshold is not
+impossible here - it is orientation-dependent, which for a fall alarm is
+arguably worse, because it fails silently for a whole class of falls rather
+than failing visibly for all of them.
+
+The decision below still holds. Its justification changes: the threshold was
+lowered because 2.5 g gives unreliable, orientation-dependent detection on a
++/-2 g wrist sensor, not because 2.5 g is unreachable.
 
 **The decision, 15 November 2026.** Lower the threshold to 1.8 g rather than
 re-range the sensor. Setting `0x1C` to +/-8 g is the better fix in
@@ -103,10 +120,14 @@ synthetic signals only. Walking peaks at 1.60 g in those tests, a margin of
 
 ### Suggested wording for the report
 
-> The accelerometer operates at its default +/-2 g range, so impacts clip at
-> 2 g and the 2.5 g threshold used in the literature is unreachable on this
-> hardware. We lowered the impact threshold to 1.8 g rather than re-range the
-> sensor, which would have invalidated models already trained on +/-2 g data.
+> The accelerometer operates at its default +/-2 g range, so each axis clips
+> at 2 g. Because the detector uses the signal vector magnitude, the usable
+> ceiling depends on impact orientation: from 2.00 g when an impact lands on
+> a single axis to 3.46 g when it is distributed across three. The 2.5 g
+> threshold used in the literature is therefore reachable for some falls and
+> unreachable for others on this hardware. We lowered the impact threshold to
+> 1.8 g rather than re-range the sensor, which would have invalidated models
+> already trained on +/-2 g data.
 > Detection remains a three-stage rule - free fall, impact, stillness - so the
 > reduced threshold is not evaluated in isolation. We note that this reduces
 > specificity and that validation to date is against synthetic signals.

@@ -137,7 +137,14 @@ def default_source() -> SensorSource:
         return source
     except Exception as exc:  # noqa: BLE001
         print(f"[live] could not open {port}: {exc}; falling back to the simulator")
-        return SimulatedSource()
+        fallback = SimulatedSource()
+        # Why the simulator is running, carried on the object so the status
+        # strip can say so. Without this the page reads "live (simulated)"
+        # and looks perfectly healthy, while the only clue that the device
+        # was asked for and refused is a line in a terminal nobody is
+        # watching - which is how a demo gets given on fake data.
+        fallback.fallback_reason = f"{port} would not open"
+        return fallback
 
 
 def _describe_age(seconds: float) -> str:
@@ -286,8 +293,43 @@ class LiveState:
             if self._last_sample_at is None:
                 return "waiting"
             if time.monotonic() - self._last_sample_at <= STALE_AFTER_S:
-                return f"live ({self.source_kind})"
+                return f"live ({self.source_kind}{self._link_note()})"
             return "stalled"
+
+    def _link_note(self) -> str:
+        """What else the reader needs to know about the link, if anything.
+
+        Two cases, both of which otherwise hide behind a healthy-looking
+        readout:
+
+        * the simulator is running because a port was named and refused,
+          so the page says which port rather than quietly pretending the
+          simulator was the plan;
+        * the device is connected but losing samples, which is what a
+          weak Bluetooth link looks like. A gap in the counter means the
+          classifier is being handed windows with holes in them, and
+          nothing else on the page would show it.
+
+        Returns "" when there is nothing to add, so the common reading
+        stays the short "live (device)".
+        """
+        reason = getattr(self.source, "fallback_reason", None)
+        if reason:
+            return f", {reason}"
+
+        dropped = getattr(self.source, "dropped_samples", 0)
+        bad = getattr(self.source, "bad_lines", 0)
+        restarts = getattr(self.source, "restarts", 0)
+        notes = []
+        if dropped:
+            notes.append(f"{dropped} dropped")
+        if restarts:
+            notes.append(f"{restarts} reset" + ("s" if restarts > 1 else ""))
+        if bad > 20:
+            # A handful of unparseable lines is normal: the handshake text
+            # and a connection joined mid-line both land here.
+            notes.append(f"{bad} bad lines")
+        return (", " + ", ".join(notes)) if notes else ""
 
     def sample_rate_label(self) -> str:
         """The *measured* rate, or ``--``.

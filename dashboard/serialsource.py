@@ -52,12 +52,15 @@ Two hardware findings that belong upstream
 register 0x6B, to wake the MPU6050, and never writes 0x1C, so the part
 stays at its power-on default range. The divisor of 16384 confirms it.
 
-That matters more than it sounds: a real fall impact is several g, and
-the sensor cannot report more than about 2. Impacts clip, so however hard
-the floor is hit, nothing above 2 g ever leaves the device.
+That matters more than it sounds: a real fall impact is several g, and no
+single channel can report more than 2. Impacts clip, so however hard the
+floor is hit, no one axis ever leaves the device above 2 g.
 
-The fall detector was originally built to the literature's 2.5 g, which
-this hardware can never report. **On 15 November 2026 the team lowered
+Per axis, though. The fall detector works on the vector magnitude, which
+three clipped axes can still take to 3.46 g; ``replay.py`` measures 2.86 g
+at impact on clipped data. The literature's 2.5 g is therefore reachable
+for some impact orientations and not for others, rather than impossible
+outright. **On 15 November 2026 the team lowered
 the threshold to 1.8 g** so that detection can fire on real recordings at
 all; see ``falldetection.IMPACT_THRESHOLD_G`` for what that costs in
 specificity. The ceiling described here is why that number cannot go back
@@ -98,6 +101,14 @@ ACCEL_FULL_SCALE_G = 2.0
 
 Recorded here so that code and reviewers can see the ceiling rather than
 rediscovering it from a flat-topped impact.
+"""
+
+GYRO_FULL_SCALE_DPS = 250.0
+"""The gyroscope's ceiling, from the sketch's divisor of 131.
+
+The simulator runs to 500 deg/s, so brisk wrist rotation clips on the real
+device where it does not in a demonstration. ``replay.py`` applies both
+ceilings so the pipeline can be tested on device-grade data.
 """
 
 
@@ -437,5 +448,46 @@ def _selftest() -> int:
     return 0
 
 
+def _print_ports() -> int:
+    """``python serialsource.py --ports``: what this machine can see.
+
+    On demo day the one thing standing between a paired wrist unit and a
+    live dashboard is the port name, and Windows hides it three levels
+    deep in Control Panel. This prints it.
+
+    Bluetooth pairs as two ports, Incoming and Outgoing, and only the
+    Outgoing one carries data, so the descriptions are printed beside the
+    names rather than the names alone.
+    """
+    ports = list_ports()
+    if not ports:
+        print("No serial ports visible.")
+        print()
+        print("If the wrist unit is paired, it should appear here as an")
+        print("outgoing Bluetooth port. If it does not:")
+        print("  - check the unit is powered on,")
+        print("  - re-pair it in Settings > Bluetooth & devices,")
+        print("  - and look in Control Panel > Bluetooth Devices > COM Ports.")
+        return 1
+
+    print(f"{len(ports)} serial port(s):")
+    print()
+    for device, description in ports:
+        print(f"  {device:<10} {description}")
+    print()
+    print("Start the dashboard on one of these with:")
+    print()
+    print('  $env:HAR_SERIAL_PORT = "COM7"   # PowerShell, your port here')
+    print("  python app.py")
+    print()
+    print("Pick the OUTGOING Bluetooth port. The incoming one pairs and")
+    print("opens, but no data ever arrives on it.")
+    return 0
+
+
 if __name__ == "__main__":
+    import sys
+
+    if "--ports" in sys.argv:
+        raise SystemExit(_print_ports())
     raise SystemExit(_selftest())
