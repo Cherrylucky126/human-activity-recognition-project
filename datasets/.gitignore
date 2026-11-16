@@ -1,0 +1,25 @@
+# Note what is *not* here: a `*.csv` rule.
+#
+# The old data/ folder ignored every CSV, because the dataset was not
+# committed. These seven are, through Git LFS, so that rule would now
+# silently drop the data this folder exists to hold. See README.md.
+#
+# What this ignores is the rest of what collects in a data folder.
+
+# Intermediate output nothing downstream reads (downsampling-by-half.py).
+5.1HAR_Downsampled_50Hz.csv
+
+# Working copies of the tables.
+*-copy.csv
+*_copy.csv
+*.csv.bak
+*.csv.tmp
+
+# Spreadsheet and archive versions of the same data, and Office lock files.
+*.xlsx
+*.xls
+*.zip
+~$*
+
+# Notebooks people keep next to the data.
+.ipynb_checkpoints/

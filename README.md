@@ -14,7 +14,7 @@ human-activity-recognition-project/
 ├── data-preprocessing/  filtering, downsampling, feature extraction
 ├── data-processing/     model training, and the trained .pkl files
 ├── dashboard/           the live Dash dashboard  (see dashboard/README.md)
-├── data/                where the training CSV goes  (not committed)
+├── datasets/            every pipeline CSV, in order  (Git LFS)
 ├── docs/                plan, schedule, known limitations
 └── README.md
 ```
@@ -41,8 +41,19 @@ are in [`dashboard/README.md`](dashboard/README.md).
 ## Re-training the models
 
 The training scripts live in `data-processing/*-builds/`. They need the
-processed feature table, which is not in this repository — see
-[`data/README.md`](data/README.md) for where to get it and where to put it.
+processed feature table, `datasets/6HAR_Processed_Features_100hz_4_second_window.csv`.
+It is in the repository, but as a Git LFS object, so a plain clone leaves a
+130-byte pointer in its place:
+
+```
+git lfs install
+git lfs pull --include="datasets/6HAR_Processed_Features_100hz_4_second_window.csv"
+```
+
+Fetch that one file, not all seven: together they are about 600 MB against a free
+account's 1 GB of monthly LFS bandwidth for the whole team.
+[`datasets/README.md`](datasets/README.md) explains every file, the order
+they are made in, and what to check before re-running the pipeline.
 
 ## Before quoting a result
 
@@ -52,5 +63,10 @@ wording for the report. Worth reading before writing up.
 
 ## Data
 
-Recordings, consent forms and the processed dataset:
+The CSVs are in [`datasets/`](datasets/README.md). The consent forms, and a
+copy of the data that costs no LFS bandwidth, are in the project Drive
+folder:
 <https://drive.google.com/drive/folders/1tDXUz5hRw2sz_EQjFG9E-jbHLzcRiPIT?usp=drive_link>
+
+Participants appear only as `1`–`5`. The repository is private, and
+`datasets/README.md` says what making it public would publish.
