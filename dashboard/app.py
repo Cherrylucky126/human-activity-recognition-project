@@ -237,4 +237,25 @@ def _wall_clock():
 
 if __name__ == "__main__":
     LIVE.start()
-    app.run(debug=True, host=HOST, port=PORT)
+
+    # The reloader is switched off when a real device is attached, and this
+    # is not a preference.
+    #
+    # Dash's debug mode runs Werkzeug's reloader, which imports this module
+    # in a parent process and then again in a child. Two imports means two
+    # LiveState objects and two attempts to open the serial port. A serial
+    # port belongs to one process at a time, so the first import takes it
+    # and the second is refused - and the second is the one that serves the
+    # page. The result is a dashboard reading the simulator while the
+    # device sits there connected, which is exactly the confusion the
+    # connection readout was added to expose.
+    #
+    # With the simulator there is no shared resource and the reloader is
+    # genuinely useful, so it stays on.
+    reading_device = LIVE.source_kind == "device"
+    app.run(
+        debug=not reading_device,
+        use_reloader=not reading_device,
+        host=HOST,
+        port=PORT,
+    )

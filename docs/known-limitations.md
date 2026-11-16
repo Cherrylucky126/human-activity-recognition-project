@@ -74,6 +74,60 @@ flattering.
 
 ---
 
+## 2b. The wrist unit runs different firmware from the one committed
+
+Found on 16 November 2026, the first time the unit was read by the
+dashboard over Bluetooth (COM6).
+
+**What the unit actually sends.** Seven comma-separated fields, not the
+eight the committed `firmware/arduino-ide-data-collection.cpp` prints:
+
+    -0.2963,0.1891,1.0014,3.7710,0.5038,6.9160,3215
+
+There is no leading `sampleCounter`, the floats carry four decimals rather
+than two, and IR arrives around 3,000 where the committed sketch's LED
+settings produce about 85,000. Measured over ten seconds: 515 samples, 0
+parse failures once the reader was taught the format.
+
+**The rate is about 52 Hz, not 100 Hz.** Measured from arrival times across
+several runs: 51.3, 51.5, 51.8 Hz. Every model in `data-processing/` was
+trained at 100 Hz on 4-second windows, which `config.py` fixes at 400
+samples. At 52 Hz those 400 samples span **7.7 seconds** of movement.
+
+**What that means for the demonstration.** Live activity classification is
+not valid on this firmware. The feature vector is computed over roughly
+twice the intended time span, so every frequency-domain feature is wrong by
+about a factor of two. The model still returns a confident label - it was
+showing "laying, 62%" on a stationary desk - because nothing in a
+classifier can notice that its input covers the wrong duration.
+
+Step counting and heart rate are affected too: the pedometer's refractory
+period is expressed in samples at 100 Hz, and the IR scale is off by more
+than an order of magnitude from the training data.
+
+The sensor readouts, both live charts and the link itself are unaffected and
+genuinely live.
+
+**A near miss worth recording.** The first attempt at reading this firmware
+numbered the samples locally and divided by the configured 100 Hz. The page
+then displayed exactly "100 Hz" while the device sent 52 - the one readout
+whose entire purpose is to catch a rate mismatch, reporting success because
+it was measuring its own assumption. Timestamps for this firmware now come
+from arrival time, which is noisier but cannot lie. See
+`serialsource._arrival_time`.
+
+**What fixes it.** Flash the committed sketch, which samples at 100 Hz and
+numbers its output, onto the unit. No model, dataset or dashboard change is
+needed; the mismatch is entirely on the device. Until then the dashboard
+should be demonstrated on the simulator, which runs at a true 100 Hz.
+
+**Still open.** Why the unit carries older firmware is not known. The
+`config.py` note records that earlier project documents specified 50 Hz and
+2-second windows before the models were rebuilt at 100 Hz / 4 s, so this is
+plausibly that earlier build, never re-flashed.
+
+---
+
 ## 3. Fall detection runs below the literature threshold
 
 **The constraint.** The collector firmware never writes MPU6050 register
