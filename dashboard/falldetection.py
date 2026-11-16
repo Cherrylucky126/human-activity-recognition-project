@@ -179,10 +179,19 @@ FREE_FALL_MAX_DURATION_S = 0.150
 # project actually collects, that figure cannot be reached.
 #
 # The collector sketch never writes MPU6050 register 0x1C, so the accelerometer
-# stays on its default +/-2 g range. Every reading is clipped at 2 g before it
-# leaves the device. A real fall impact is several g, but it arrives here as
-# 2 g, and a 2.5 g threshold is therefore unreachable on any real recording -
-# the detector worked only in simulation, where nothing clips.
+# stays on its default +/-2 g range. EACH AXIS is clipped at 2 g before it
+# leaves the device.
+#
+# Per axis, which is the part this comment originally got wrong. The rule below
+# works on the vector magnitude, and three axes clipped at 2 g still give
+# sqrt(3) * 2 = 3.46 g. replay.py measures 2.86 g at impact on clipped data.
+#
+# So 2.5 g is reachable for some orientations and not for others: an impact
+# landing square on one axis gives exactly 2.00 g and could never cross it,
+# one landing across two or three axes reaches 2.8-3.5 g and would. A 2.5 g
+# threshold is not impossible here - it is orientation-dependent, which for a
+# fall alarm is arguably worse, because it fails silently for a whole class of
+# falls. That is the real argument for lowering it; see docs/known-limitations.
 #
 # 1.8 g is the team's decision (15 Nov), taken over the alternative of setting
 # 0x1C to +/-8 g: that is the better fix in principle, but it invalidates every

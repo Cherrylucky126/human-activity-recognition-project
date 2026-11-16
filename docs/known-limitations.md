@@ -74,16 +74,87 @@ flattering.
 
 ---
 
+## 2b. The wrist unit runs different firmware from the one committed
+
+Found on 16 November 2026, the first time the unit was read by the
+dashboard over Bluetooth (COM6).
+
+**What the unit actually sends.** Seven comma-separated fields, not the
+eight the committed `firmware/arduino-ide-data-collection.cpp` prints:
+
+    -0.2963,0.1891,1.0014,3.7710,0.5038,6.9160,3215
+
+There is no leading `sampleCounter`, the floats carry four decimals rather
+than two, and IR arrives around 3,000 where the committed sketch's LED
+settings produce about 85,000. Measured over ten seconds: 515 samples, 0
+parse failures once the reader was taught the format.
+
+**The rate is about 52 Hz, not 100 Hz.** Measured from arrival times across
+several runs: 51.3, 51.5, 51.8 Hz. Every model in `data-processing/` was
+trained at 100 Hz on 4-second windows, which `config.py` fixes at 400
+samples. At 52 Hz those 400 samples span **7.7 seconds** of movement.
+
+**What that means for the demonstration.** Live activity classification is
+not valid on this firmware. The feature vector is computed over roughly
+twice the intended time span, so every frequency-domain feature is wrong by
+about a factor of two. The model still returns a confident label - it was
+showing "laying, 62%" on a stationary desk - because nothing in a
+classifier can notice that its input covers the wrong duration.
+
+Step counting and heart rate are affected too: the pedometer's refractory
+period is expressed in samples at 100 Hz, and the IR scale is off by more
+than an order of magnitude from the training data.
+
+The sensor readouts, both live charts and the link itself are unaffected and
+genuinely live.
+
+**A near miss worth recording.** The first attempt at reading this firmware
+numbered the samples locally and divided by the configured 100 Hz. The page
+then displayed exactly "100 Hz" while the device sent 52 - the one readout
+whose entire purpose is to catch a rate mismatch, reporting success because
+it was measuring its own assumption. Timestamps for this firmware now come
+from arrival time, which is noisier but cannot lie. See
+`serialsource._arrival_time`.
+
+**What fixes it.** Flash the committed sketch, which samples at 100 Hz and
+numbers its output, onto the unit. No model, dataset or dashboard change is
+needed; the mismatch is entirely on the device. Until then the dashboard
+should be demonstrated on the simulator, which runs at a true 100 Hz.
+
+**Still open.** Why the unit carries older firmware is not known. The
+`config.py` note records that earlier project documents specified 50 Hz and
+2-second windows before the models were rebuilt at 100 Hz / 4 s, so this is
+plausibly that earlier build, never re-flashed.
+
+---
+
 ## 3. Fall detection runs below the literature threshold
 
 **The constraint.** The collector firmware never writes MPU6050 register
-`0x1C`, so the accelerometer stays on its default +/-2 g range. Every
-reading is clipped at 2 g before it leaves the device.
+`0x1C`, so the accelerometer stays on its default +/-2 g range. Each axis
+is clipped at 2 g before it leaves the device.
 
-**What that broke.** The literature threshold for a fall impact is about
-2.5 g (Bagala et al. survey 2-3 g at the waist; a wrist sees higher peaks
-still). On this hardware, 2.5 g can never be reported. Fall detection worked
-in simulation and could not have fired on a real recording.
+**Correction, 16 November 2026.** This section previously said that 2.5 g
+"can never be reported" on this hardware. That is wrong, and the error was
+found by `dashboard/replay.py`, which feeds clipped device-format data
+through the detector. The clipping is **per axis**; the detector works on
+the vector magnitude, sqrt(ax^2 + ay^2 + az^2), which three axes at 2 g
+take to 3.46 g. A simulated fall replayed through the real clipping peaks
+at 2.86 g.
+
+**What that actually broke.** The literature threshold for a fall impact is
+about 2.5 g (Bagala et al. survey 2-3 g at the waist; a wrist sees higher
+peaks still). On this hardware that threshold is reachable for some impact
+orientations and not for others: an impact landing square on one axis gives
+exactly 2.00 g and can never cross 2.5 g, while one landing across two or
+three axes reaches 2.8-3.5 g and does. So a 2.5 g threshold is not
+impossible here - it is orientation-dependent, which for a fall alarm is
+arguably worse, because it fails silently for a whole class of falls rather
+than failing visibly for all of them.
+
+The decision below still holds. Its justification changes: the threshold was
+lowered because 2.5 g gives unreliable, orientation-dependent detection on a
++/-2 g wrist sensor, not because 2.5 g is unreachable.
 
 **The decision, 15 November 2026.** Lower the threshold to 1.8 g rather than
 re-range the sensor. Setting `0x1C` to +/-8 g is the better fix in
@@ -103,10 +174,14 @@ synthetic signals only. Walking peaks at 1.60 g in those tests, a margin of
 
 ### Suggested wording for the report
 
-> The accelerometer operates at its default +/-2 g range, so impacts clip at
-> 2 g and the 2.5 g threshold used in the literature is unreachable on this
-> hardware. We lowered the impact threshold to 1.8 g rather than re-range the
-> sensor, which would have invalidated models already trained on +/-2 g data.
+> The accelerometer operates at its default +/-2 g range, so each axis clips
+> at 2 g. Because the detector uses the signal vector magnitude, the usable
+> ceiling depends on impact orientation: from 2.00 g when an impact lands on
+> a single axis to 3.46 g when it is distributed across three. The 2.5 g
+> threshold used in the literature is therefore reachable for some falls and
+> unreachable for others on this hardware. We lowered the impact threshold to
+> 1.8 g rather than re-range the sensor, which would have invalidated models
+> already trained on +/-2 g data.
 > Detection remains a three-stage rule - free fall, impact, stillness - so the
 > reduced threshold is not evaluated in isolation. We note that this reduces
 > specificity and that validation to date is against synthetic signals.
