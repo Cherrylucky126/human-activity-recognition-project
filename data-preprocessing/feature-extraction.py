@@ -5,7 +5,7 @@ import os
 # --- Configuration ---
 DATASET_NAME = '5HAR_Filtered_Dataset.csv'
 _REPO_ROOT = os.path.abspath(
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, os.pardir)
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir)
 )
 DATASET_PATH = os.environ.get('HAR_DATASET') or os.path.join(
     _REPO_ROOT, 'datasets', DATASET_NAME
