@@ -241,8 +241,12 @@ def _drain(live, timeout_s: float = 20.0) -> int:
 def _selftest() -> int:
     try:
         from live import LiveState
+        from buffer import SampleBuffer
+        from config import STEP_SIZE, WINDOW_SIZE
     except ImportError:  # pragma: no cover
         from dashboard.live import LiveState
+        from dashboard.buffer import SampleBuffer
+        from dashboard.config import STEP_SIZE, WINDOW_SIZE
 
     print("replay.py self-test")
     print("  (no hardware needed: the sketch's wire format, through the")
@@ -309,6 +313,23 @@ def _selftest() -> int:
     # -- the whole stack, on device-grade data ------------------------------
     walk = generate_lines("walking", seconds=22.0, fall_at=16.0)
     live = LiveState(replay_source(walk))
+
+    # Give this one a bigger buffer than the dashboard uses, before it
+    # starts.
+    #
+    # A replay port hands over its whole stream as fast as readline() is
+    # called, so 22 seconds of samples land in a fraction of a second. The
+    # real buffer holds 10 seconds, so it correctly throws away the oldest
+    # windows before the consumer can classify them - between three and
+    # five of the ten, depending on how the reader thread happens to be
+    # scheduled. That is the ring buffer working as designed, not a fault,
+    # but it made this check assert against a number that moved from run
+    # to run and fail roughly one time in three.
+    #
+    # Holding the whole replay means the count is determined by the
+    # pipeline rather than by thread timing. What the real buffer does
+    # under overflow is covered by buffer.py's own tests.
+    live.buffer = SampleBuffer(capacity=len(walk) + WINDOW_SIZE)
     live.start()
     stored = _drain(live)
 
@@ -331,10 +352,16 @@ def _selftest() -> int:
     )
 
     history = live.prediction_history()
+    expected_windows = 1 + (len(walk) - WINDOW_SIZE) // STEP_SIZE
     check(
         "the classifier produced predictions from wire data",
-        len(history) >= 5,
-        f"{len(history)} windows classified",
+        len(history) == expected_windows,
+        f"{len(history)} of {expected_windows} windows classified",
+    )
+    check(
+        "no window was discarded, so the count is the pipeline's, not the clock's",
+        live.buffer.stats.windows_skipped == 0,
+        f"{live.buffer.stats.windows_skipped} skipped",
     )
     if history:
         labels = {p.label for _, p in history}

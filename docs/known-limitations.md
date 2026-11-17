@@ -128,6 +128,41 @@ plausibly that earlier build, never re-flashed.
 
 ---
 
+### Correction, 17 November 2026: the rate affected more than the classifier
+
+This section first said that the 52 Hz rate invalidated activity
+classification, and that the other readouts were unaffected. That was
+wrong, and the error mattered.
+
+Three of the four live measurements on the dashboard are timing
+measurements, and all three were constructed with `config.SAMPLING_FREQ_HZ`
+- the rate the device is meant to send at, not the rate it does. At 52 Hz:
+
+- **Heart rate** was out by the ratio of the two rates, so a resting pulse
+  of about 65 displayed as about 125. That is high but not impossible, so
+  the 40-200 bpm plausibility check accepted it. A wrong number that looks
+  reasonable is worse than no number.
+- **The step count** derived its minimum gap between steps in samples, so
+  it enforced roughly half the intended interval.
+- **Fall detection stopped working entirely.** The detector converts its
+  durations to sample counts once, at construction. A genuine 100 ms free
+  fall was measured as 192 ms, which exceeds `free_fall_max_duration_s`, so
+  the sequence was abandoned before the impact stage was ever reached. No
+  alert could be raised on the real device, at any impact.
+
+The dashboard now measures the arriving rate and re-tunes the pedometer,
+the heart-rate estimator and the fall detector to it, keeping the step
+count and any latched alert. It re-tunes only on a trustworthy measurement
+(at least 400 samples held), inside 10-400 Hz, and more than 5% from the
+current tuning - so jitter around 100 Hz does not trigger it, and a link
+degraded to 4 Hz is treated as broken rather than re-tuned to. The footer
+states the new rate when it happens.
+
+The classifier is deliberately not re-tuned: its models were fitted on
+400-sample windows of 100 Hz data, and no runtime adjustment can change
+that. Flashing the committed firmware remains the fix.
+
+
 ## 3. Fall detection runs below the literature threshold
 
 **The constraint.** The collector firmware never writes MPU6050 register

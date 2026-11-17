@@ -40,6 +40,11 @@ is still several points per pixel column.
 
 from __future__ import annotations
 
+try:
+    from config import pretty_label
+except ImportError:  # pragma: no cover - package-style import
+    from dashboard.config import pretty_label
+
 SERIES_COLORS = ("#3987e5", "#d95926", "#199e70")
 """Blue, orange, green: slots 1-3 of the reference categorical palette.
 
@@ -248,7 +253,7 @@ def probability_figure(probabilities, classes):
                 "type": "bar",
                 "orientation": "h",
                 "x": values,
-                "y": [c.replace("_", " ") for c in rows],
+                "y": [pretty_label(c) for c in rows],
                 "marker": {"color": colors},
                 "text": [f"{v:.0f}%" for v in values],
                 "textposition": "outside",
