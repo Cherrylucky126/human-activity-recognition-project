@@ -158,6 +158,21 @@ Activity classification is **not** valid on it. `config.py` cuts windows of
 will keep returning confident labels regardless - on a motionless desk it
 read "laying, 62%".
 
+The other three readouts *are* corrected, as of 17 November. Heart rate,
+the step count and fall detection are all timing measurements, and all
+three were built with the configured 100 Hz rather than the real one. An
+earlier version of this section said only classification was affected,
+which was wrong: at 52 Hz the heart rate read about twice the true pulse
+and still passed its 40-200 bpm plausibility check, the pedometer enforced
+half its intended gap between steps, and the fall detector measured a
+100 ms free fall as 192 ms - past its own maximum, so the sequence was
+discarded and **falls stopped being detected at all**.
+
+`live.py` now measures the rate and re-tunes those three to it. The footer
+says so when it happens (`timings re-tuned to 52 Hz`). The classifier is
+deliberately left alone, because nothing in the dashboard can refit a model
+to a different window length.
+
 Check the sampling rate readout before trusting anything on the page. If it
 does not say 100, the predictions are meaningless no matter how reasonable
 they look. Flashing the committed 100 Hz sketch onto the unit fixes it, and
@@ -241,7 +256,19 @@ self-test against the 1.80 g threshold, so the margin is 0.2 g and is the
 first thing to re-check against real recordings. If the firmware is ever
 fixed to ±8 g, raise the threshold back to 2.5 g in the same change.
 
-**The random forest loads, and is the model in use.** It was re-saved
+**The model is chosen on the page.** The footer has a picker listing every
+trained model; the SVM is the default. The name beside it is read from the
+model that actually loaded, not from the picker, so if a switch fails the
+two disagree and the footer is the one telling the truth. The saved SVM is
+a `CalibratedClassifierCV` wrapping the support vector classifier, which is
+what gives it the calibrated `predict_proba` the probability bars need.
+
+**The footer reports failed windows.** `predict()` swallows an exception
+and keeps the previous prediction on screen, so a classifier failing on
+every window would otherwise look like one that is working and sure of
+itself - same label, full confidence, clock still ticking.
+
+**The random forest loads.** It was re-saved
 under scikit-learn 1.9.1 on 15 November, which fixed the `KeyError: 13` it
 used to raise. The dashboard still falls back to the next model that loads
 if anything goes wrong with it, and still prints the model actually running

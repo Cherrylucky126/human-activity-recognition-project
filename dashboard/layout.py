@@ -15,8 +15,14 @@ because Dash resolves these by string at runtime, not at import.
 
 from dash import dcc, html
 
-from config import APP_TITLE, DISPLAY_WINDOW_SEC, TICK_INTERVAL_MS
+from config import (
+    APP_TITLE,
+    DISPLAY_WINDOW_SEC,
+    TICK_INTERVAL_MS,
+    pretty_label,
+)
 from figures import empty_figure as _blank_figure
+from inference import model_names
 
 
 class Ids:
@@ -61,6 +67,11 @@ class Ids:
     # Fall alert (PR 9 wires the banner; the rule itself is PR 12).
     FALL_BANNER = "fall-banner"
     FALL_DISMISS = "fall-dismiss"
+    DEMO_BAR = "demo-bar"
+    STATUS_DOT = "status-dot"
+    MODEL_SELECT = "model-select"
+    RECONNECT = "reconnect"
+    RECONNECT_STATUS = "reconnect-status"
     FALL_DETAIL = "fall-detail"
 
     # Demo controls (PR 9). Present only when the source is the simulator,
@@ -102,6 +113,71 @@ def _readout(label, element_id, unit=""):
     )
 
 
+def _model_picker():
+    """A dropdown for choosing which trained model classifies.
+
+    Sits beside the footer's model name, which is written by the status
+    callback from whichever model is *actually* loaded. So the label is
+    not an echo of this dropdown: if a model fails to load, the dropdown
+    shows what was asked for and the label shows what is running, and the
+    two disagreeing is the signal.
+
+    Every model in the fallback chain is offered. The list comes from
+    ``inference.MODEL_CANDIDATES`` rather than being typed again here, so
+    adding a model in one place puts it on the page.
+    """
+    return html.Div(
+        className="model-picker",
+        children=[
+            # No label here: the footer already reads "Model: SVM" two
+            # items to the left, and the dropdown's own placeholder says
+            # "Switch model". A third "Model" was just noise.
+            dcc.Dropdown(
+                id=Ids.MODEL_SELECT,
+                # The value stays the model's own name - it is what
+                # inference matches on - while the label is formatted.
+                options=[
+                    {"label": pretty_label(n), "value": n} for n in model_names()
+                ],
+                value=None,
+                placeholder="switch model",
+                clearable=False,
+                searchable=False,
+                className="demo-select model-select",
+            ),
+        ],
+    )
+
+
+def _reconnect_control():
+    """A button that hunts for the device again, and a line saying what happened.
+
+    This sits in the status strip, beside the readouts that say something is
+    wrong, because that is where someone looks when the rate is bad or the
+    link has died. The two failures this hardware actually has - the unit
+    drops its Bluetooth link, and it comes back on a different COM port
+    after re-pairing - both leave the app running and useless, and both are
+    fixed by looking for the device again rather than restarting the app.
+
+    It is always built, never only for the device: the most useful moment
+    to press it is when the dashboard fell back to the simulator because
+    nothing was connected at startup.
+    """
+    return html.Div(
+        className="reconnect",
+        children=[
+            html.Button(
+                "Reconnect",
+                id=Ids.RECONNECT,
+                className="demo-button",
+                n_clicks=0,
+                title="Look for the wrist unit again, on any port",
+            ),
+            html.Span("", id=Ids.RECONNECT_STATUS, className="reconnect-status"),
+        ],
+    )
+
+
 def _demo_bar():
     """Controls for driving the simulator during a demonstration.
 
@@ -114,13 +190,14 @@ def _demo_bar():
     should not be able to mistake a demonstration for a recording.
     """
     return html.Div(
+        id=Ids.DEMO_BAR,
         className="demo-bar",
         children=[
             html.Span("Simulator", className="demo-tag"),
             dcc.Dropdown(
                 id=Ids.DEMO_ACTIVITY,
                 options=[
-                    {"label": name.replace("_", " "), "value": name}
+                    {"label": pretty_label(name), "value": name}
                     for name in DEMO_ACTIVITIES
                 ],
                 value="sitting",
@@ -189,7 +266,40 @@ def build_layout(show_demo_controls=False):
                     html.Button("Dismiss", id=Ids.FALL_DISMISS, className="dismiss"),
                 ],
             ),
-            _demo_bar() if show_demo_controls else html.Div(),
+            # Masthead: what this page is, and whether it is alive.
+            #
+            # The page used to open straight onto the activity label,
+            # which reads well on a laptop and badly on a projector,
+            # where the audience sees a word with no frame around it.
+            html.Div(
+                className="masthead",
+                children=[
+                    html.Div(
+                        className="masthead-title",
+                        children=[
+                            # The dot's colour is set by the status
+                            # callback from the live connection state, so
+                            # the one thing visible from the back of a
+                            # room is whether data is arriving.
+                            html.Span(id=Ids.STATUS_DOT, className="dot dot-waiting"),
+                            html.Span(APP_TITLE, className="masthead-name"),
+                        ],
+                    ),
+                    html.Span(
+                        "Team 2 · Applied Computer Science Lab · SRH Heidelberg",
+                        className="masthead-sub",
+                    ),
+                ],
+            ),
+            # Always built; the status callback shows or hides it.
+            #
+            # It used to be built only when the source was the simulator,
+            # decided once at startup. Reconnect can change the source
+            # afterwards, which left the simulator's controls on screen
+            # beside a real device - the precise confusion the bar's label
+            # exists to prevent. Deciding it every tick means the bar
+            # follows whatever is really feeding the page.
+            _demo_bar(),
             # Header: the one thing a person glances at.
             html.Header(
                 className="header",
@@ -217,6 +327,7 @@ def build_layout(show_demo_controls=False):
                     _readout("Connection", Ids.CONNECTION),
                     _readout("Sampling rate", Ids.SAMPLE_RATE, "Hz"),
                     _readout("Heart rate", Ids.HEART_RATE, "bpm"),
+                    _reconnect_control(),
                 ],
             ),
             html.Div(
@@ -294,6 +405,7 @@ def build_layout(show_demo_controls=False):
                     # a demo silently running one model while the report
                     # describes another is caught at the viva, not before.
                     html.Span(PLACEHOLDER, id=Ids.MODEL_NAME, className="muted"),
+                    _model_picker(),
                     html.Span(
                         "Heart rate is an indicative signal from an optical "
                         "sensor, not a medical measurement.",

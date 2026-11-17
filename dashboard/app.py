@@ -30,7 +30,19 @@ import time
 
 from dash import Dash, Input, Output, callback, ctx, no_update
 
-from config import APP_TITLE, DISPLAY_WINDOW_SEC, HOST, PORT
+from config import (
+    APP_TITLE,
+    DISPLAY_WINDOW_SEC,
+    HOST,
+    PORT,
+    pretty_label,
+    sentence_case,
+)
+
+import timeline
+from figures import line_figure, probability_figure
+from layout import Ids, build_layout
+from live import LIVE
 
 TIMELINE_SECONDS = 60.0
 """How much prediction history the timeline strip shows.
@@ -38,16 +50,17 @@ TIMELINE_SECONDS = 60.0
 A minute is about 30 windows: enough to see whether the classifier is
 steady, short enough that each block stays wide enough to hover.
 """
-import timeline
-from figures import line_figure, probability_figure
-from layout import Ids, build_layout
-from live import LIVE
 
 app = Dash(__name__, title=APP_TITLE)
 
 # The demo controls drive the simulator, so they are only built when the
 # source actually is the simulator. In front of a real device they would do
 # nothing while implying the opposite.
+# The demo controls are built unconditionally and shown or hidden by
+# update_status on every tick, because the source can change at runtime
+# via Reconnect. The argument is kept for callers that build the layout
+# without the callbacks running - the self-tests do - and sets only the
+# bar's initial state.
 app.layout = build_layout(show_demo_controls=LIVE.source_kind == "simulated")
 
 # Dash warns about callbacks targeting ids that do not exist. Every id in
@@ -64,6 +77,8 @@ app.layout = build_layout(show_demo_controls=LIVE.source_kind == "simulated")
     Output(Ids.ACTIVITY, "children"),
     Output(Ids.CONFIDENCE, "children"),
     Output(Ids.MODEL_NAME, "children"),
+    Output(Ids.DEMO_BAR, "className"),
+    Output(Ids.STATUS_DOT, "className"),
     Input(Ids.TICK, "n_intervals"),
 )
 def update_status(_n_intervals):
@@ -85,14 +100,42 @@ def update_status(_n_intervals):
     """
     LIVE.poll()
     activity, confidence, _gesture = LIVE.activity_labels()
+
+    # The demo bar's visibility is decided here, every tick, from the
+    # source actually feeding the page - not once at startup. Reconnect
+    # can swap a simulator for a device and back, and a simulator control
+    # bar sitting beside live device data is the one piece of this page
+    # that could make a demonstration look like a recording.
+    demo_class = (
+        "demo-bar" if LIVE.source_kind == "simulated" else "demo-bar hidden"
+    )
+
+    # One glanceable indicator, derived from the connection phrase rather
+    # than from a second source of truth: green while data is arriving,
+    # amber while waiting for the first sample, red once it has stopped.
+    connection = LIVE.connection_label()
+    if connection.startswith("stalled") or connection.startswith("failed"):
+        dot_class = "dot dot-bad"
+    elif connection.startswith("waiting"):
+        dot_class = "dot dot-waiting"
+    else:
+        dot_class = "dot dot-good"
+
+    # Capitalisation happens here, at the edge, not in live.py. The
+    # classifier's class names are its own and are used to index
+    # probabilities and colours; formatting them for reading is the
+    # display layer's job, and keeping it here means the two can never
+    # drift into one another.
     return (
         _wall_clock(),
-        LIVE.connection_label(),
+        sentence_case(connection),
         LIVE.sample_rate_label(),
         LIVE.heart_rate_label(),
-        activity,
+        pretty_label(activity),
         confidence,
-        LIVE.model_label(),
+        sentence_case(LIVE.model_label()),
+        demo_class,
+        dot_class,
     )
 
 
@@ -198,6 +241,51 @@ def update_fall_banner(_n_intervals, _n_clicks):
 
 
 @callback(
+    Output(Ids.MODEL_SELECT, "value"),
+    Input(Ids.MODEL_SELECT, "value"),
+    prevent_initial_call=True,
+)
+def choose_model(name):
+    """Swap the classifier when the picker changes.
+
+    The dropdown's own value is the output, following ``drive_simulator``:
+    the callback needs somewhere to write, and ``no_update`` leaves the
+    selection where the user put it.
+
+    Nothing is written to the footer's model name here. That is owned by
+    ``update_status`` and refreshes ten times a second from the model that
+    actually loaded - so if this switch fails, the dropdown and the footer
+    disagree, and the footer is the one telling the truth.
+    """
+    if name:
+        LIVE.set_model(name)
+    return no_update
+
+
+@callback(
+    Output(Ids.RECONNECT_STATUS, "children"),
+    Input(Ids.RECONNECT, "n_clicks"),
+    prevent_initial_call=True,
+)
+def reconnect_device(_n_clicks):
+    """Hunt for the wrist unit again and report what was found.
+
+    Writes only to its own status line. The connection readout belongs to
+    ``update_status`` and Dash allows one callback per output, so this one
+    must not touch it - and need not: the 10 Hz tick refreshes it within a
+    fraction of a second anyway.
+
+    This blocks while each port is probed, roughly 1.5 seconds each. That
+    is deliberate. A reconnection that returned instantly and reported
+    success before any data had arrived would be the same class of lie as
+    a sampling rate derived from an assumption: the only proof a port
+    carries the device is samples coming off it.
+    """
+    message = LIVE.reconnect()
+    return f"{message}, {_wall_clock()}"
+
+
+@callback(
     Output(Ids.DEMO_ACTIVITY, "value"),
     Input(Ids.DEMO_ACTIVITY, "value"),
     Input(Ids.DEMO_FALL, "n_clicks"),
@@ -230,8 +318,6 @@ def _wall_clock():
     Wall-clock time, not the sample timestamps: this readout answers "is
     this screen frozen?", which a monotonic clock cannot.
     """
-    import time
-
     return time.strftime("%H:%M:%S")
 
 

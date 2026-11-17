@@ -64,6 +64,34 @@ except ImportError:  # pragma: no cover - imported as a package instead
     from dashboard.vitals import HeartRateEstimator
 
 
+RETUNE_MIN_SAMPLES = 400
+"""Samples that must be held before the measured rate is trusted enough to act on."""
+
+RETUNE_RANGE_HZ = (10.0, 400.0)
+"""Rates worth re-tuning to. Outside this the link is broken, not slow.
+
+At 4 Hz - which this project's unit produced with a failed pulse sensor
+blocking its loop - re-tuning would dutifully adjust a pedometer that has
+no usable data to count. Leaving the consumers at their last good rate
+keeps the sampling-rate readout as the thing that says what is wrong.
+"""
+
+RETUNE_CHECK_INTERVAL_S = 2.0
+"""How often the measured rate is checked against the tuning.
+
+Not every poll. ``measured_sampling_rate()`` copies the sample deque to
+index into it, so running it on each poll put an O(buffer) copy in the hot
+path - enough, under load, to cut the number of windows the pipeline got
+through. The rate cannot meaningfully change faster than this anyway.
+"""
+
+RETUNE_TOLERANCE = 0.05
+"""Relative difference that counts as a real change (5%).
+
+Wide enough that ordinary jitter around 100 Hz never triggers a re-tune,
+narrow enough that 52 Hz does immediately.
+"""
+
 STALE_AFTER_S = 0.5
 """No samples for this long and the link is reported as stalled.
 
@@ -123,13 +151,27 @@ def default_source() -> SensorSource:
     dashboard while they sort the port out.
     """
     port = os.environ.get("HAR_SERIAL_PORT", "").strip()
-    if not port:
+    auto = os.environ.get("HAR_SERIAL_AUTO", "").strip().lower() in ("1", "true", "yes")
+    if not port and not auto:
         return SimulatedSource()
 
     try:
-        from serialsource import SerialSource
+        from serialsource import SerialSource, find_device_port
     except ImportError:  # pragma: no cover
-        from dashboard.serialsource import SerialSource
+        from dashboard.serialsource import SerialSource, find_device_port
+
+    # Find the port by looking for the device on it, rather than trusting a
+    # name. Bluetooth re-pairing moves the port - this project has seen the
+    # same unit on COM5, COM6 and COM8 - so a name that worked yesterday is
+    # not evidence it is right today.
+    found = find_device_port(preferred=port or None)
+    if found:
+        port = found
+    elif not port:
+        print("[live] no serial port is carrying sensor data; using the simulator")
+        fallback = SimulatedSource()
+        fallback.fallback_reason = "no device found on any port"
+        return fallback
 
     try:
         source = SerialSource(port)
@@ -192,6 +234,12 @@ class LiveState:
         self._last_error: str | None = None
         self._polls = 0
         self._last_heart_update: float = 0.0
+
+        # What the timing consumers are tuned to. Starts at the configured
+        # rate and follows the measured one; see _retune_if_rate_differs.
+        self._tuned_fs: float = float(SAMPLING_FREQ_HZ)
+        self._retuned_at: float | None = None
+        self._last_retune_check: float = 0.0
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -256,9 +304,70 @@ class LiveState:
                 if prediction is not None:
                     self.predictions.append((time.time(), prediction))
 
+            self._retune_if_rate_differs()
+
             self._last_sample_at = time.monotonic()
             self._last_error = None
             return stored
+
+    def _retune_if_rate_differs(self) -> None:
+        """Point the pedometer, heart rate and fall detector at the real rate.
+
+        Caller holds the lock.
+
+        Three of the four things on this page are timing measurements, and
+        all three were built with ``config.SAMPLING_FREQ_HZ``: the rate the
+        device is *supposed* to send at. When it sends at another rate -
+        the team's unit sends 52 Hz - every one of them is wrong by that
+        ratio, and none of them looks wrong:
+
+        * heart rate comes out at the true BPM times 100/52, which for a
+          resting pulse lands around 130 and passes the 40-200 check;
+        * the pedometer's minimum gap between steps is counted in samples,
+          so it enforces about half the intended gap;
+        * the fall detector measures a 100 ms free fall as 192 ms, past
+          ``free_fall_max``, and discards the sequence before it ever
+          reaches the impact stage. Falls stop being detected at all.
+
+        The classifier is deliberately not re-tuned. Its models were fitted
+        on 400-sample windows of 100 Hz data and nothing here can change
+        that; the sampling-rate readout remains the place that says so.
+
+        Only acted on when the measurement is trustworthy and the
+        difference is real: at least ``RETUNE_MIN_SAMPLES`` samples behind
+        it, a rate inside ``RETUNE_RANGE_HZ``, and more than
+        ``RETUNE_TOLERANCE`` away from what the consumers are tuned to.
+        Without that band a rate wobbling either side of a boundary would
+        re-tune on every poll, and re-tuning abandons any part-finished
+        fall sequence.
+        """
+        now = time.monotonic()
+        if now - self._last_retune_check < RETUNE_CHECK_INTERVAL_S:
+            return
+        self._last_retune_check = now
+
+        if len(self.buffer) < RETUNE_MIN_SAMPLES:
+            return
+        measured = self.buffer.measured_sampling_rate()
+        if measured is None:
+            return
+        low, high = RETUNE_RANGE_HZ
+        if not (low <= measured <= high):
+            return
+        if abs(measured - self._tuned_fs) <= RETUNE_TOLERANCE * self._tuned_fs:
+            return
+
+        self.steps.set_sampling_rate(measured)
+        self.heart.set_sampling_rate(measured)
+        self.detector.set_sampling_rate(measured)
+        self._tuned_fs = measured
+        self._retuned_at = time.monotonic()
+
+    @property
+    def tuned_sampling_rate(self) -> float:
+        """The rate the timing measurements are currently tuned to."""
+        with self._lock:
+            return self._tuned_fs
 
     # -- what the panels ask about -----------------------------------------
 
@@ -436,7 +545,24 @@ class LiveState:
         """
         if not self.classifier.ready:
             return f"no model: {self.classifier.unavailable_reason}"
-        return f"model: {self.classifier.name}"
+
+        label = f"model: {self.classifier.name}"
+
+        # Failed windows are reported here because nowhere else would show
+        # them. predict() swallows its exception and keeps the previous
+        # prediction on screen, so a classifier failing on every window
+        # looks exactly like one that is working and sure of itself.
+        errors = self.classifier.errors
+        if errors:
+            label += f" - {errors} window{'s' if errors != 1 else ''} failed"
+
+        # Re-tuning is worth saying out loud: it means the device is not
+        # sending at the rate the models were trained on, so the timing
+        # readouts have been corrected but the activity label cannot be.
+        if self._retuned_at is not None:
+            label += f" - timings re-tuned to {self._tuned_fs:.0f} Hz"
+
+        return label
 
     def fall_state(self) -> tuple[bool, str]:
         """Whether the alert is up, and one line describing the event.
@@ -466,6 +592,101 @@ class LiveState:
                 parts.append(f"{_describe_age(ago)} ago")
 
         return True, ", ".join(parts)
+
+    def reconnect(self) -> str:
+        """Hunt for the device again and start reading it. Returns a message.
+
+        This is what the Reconnect button calls. It exists because the two
+        things that go wrong with this hardware both leave the dashboard
+        running and useless: the unit drops its Bluetooth link, or it comes
+        back on a different COM port after re-pairing. Neither is worth a
+        restart of the whole app, and in front of an audience a restart is
+        the one thing there is no time for.
+
+        Everything derived from the old stream is cleared - buffer,
+        predictions, pedometer, fall latch - because mixing samples from
+        before and after a reconnection produces a window that spans the
+        gap, and the classifier would read that as a movement that never
+        happened. The step count going back to zero is the visible cost,
+        and it is the right trade.
+        """
+        try:
+            from serialsource import SerialSource, find_device_port
+        except ImportError:  # pragma: no cover
+            from dashboard.serialsource import SerialSource, find_device_port
+
+        preferred = os.environ.get("HAR_SERIAL_PORT", "").strip() or None
+        if isinstance(self.source, SerialSource):
+            preferred = self.source.port or preferred
+
+        # Stop the reader FIRST. A serial port belongs to one process at a
+        # time, and probing is done by opening the port: with the reader
+        # still attached, the device's own port refuses to open, scores
+        # zero, and the hunt concludes there is no device - dropping a
+        # working link to the simulator, which is the exact failure this
+        # button exists to repair.
+        with self._lock:
+            try:
+                self.source.stop()
+            except Exception:  # noqa: BLE001
+                pass
+
+        found = find_device_port(preferred=preferred)
+
+        with self._lock:
+            if found is None:
+                fallback = SimulatedSource()
+                fallback.fallback_reason = "no device found on any port"
+                self.source = fallback
+                message = "No device found on any port - running the simulator"
+            else:
+                self.source = SerialSource(found)
+                message = f"Reconnected on {found}"
+
+            self._reset_derived_state()
+            self._running = False
+
+        try:
+            self.start()
+        except Exception as exc:  # noqa: BLE001
+            return f"{type(exc).__name__}: {exc}"
+        return message
+
+    def _reset_derived_state(self) -> None:
+        """Throw away everything computed from the previous stream.
+
+        Caller holds the lock. Kept separate from :meth:`reconnect` so the
+        list of things that must be cleared lives in one place: forgetting
+        one of these is how a reconnected dashboard shows a prediction made
+        from samples either side of a gap.
+        """
+        self.buffer.clear()
+        self.predictions.clear()
+        self.steps.reset()
+        self.detector.reset()
+        self.heart.reset()
+        self._last_sample_at = None
+        self._last_error = None
+        self._last_heart_update = 0.0
+
+    def set_model(self, name) -> str:
+        """Switch the classifier to ``name``. Returns a line for the screen.
+
+        Taken under the lock because ``poll()`` classifies inside it: a
+        swap halfway through a prediction would hand one model's features
+        to another's scaler.
+
+        The prediction history is cleared on a successful switch. The
+        timeline strip reads as one model's run of opinions, and silently
+        splicing two models into it would make the page misleading in the
+        exact way the footer's model name is meant to prevent. The strip
+        refills within a couple of seconds.
+        """
+        with self._lock:
+            message = self.classifier.switch_to(name)
+            if message.startswith("switched"):
+                self.predictions.clear()
+            return message
 
     def dismiss_fall(self) -> None:
         """Lower the alert. The event history is kept."""
@@ -648,6 +869,148 @@ def _selftest() -> int:
 
     state.stop()
     check("stop() stops the source", not state.is_running)
+
+    # -- re-tuning to the real sampling rate -------------------------------
+    # The bug this covers: the unit sends 52 Hz, the consumers were built
+    # for 100, and every timing measurement is wrong by that ratio while
+    # looking entirely healthy.
+    # The stream is built with timestamps 1/52 s apart, because that is
+    # what the dashboard actually measures the rate from. Generating
+    # "52 Hz" of simulated motion would not do it: the eight-field wire
+    # format numbers its samples and the timestamp comes from the counter
+    # divided by the configured rate, so it reads 100 Hz however fast the
+    # samples really arrive. That is a real property of the counter path,
+    # documented in serialsource, not an artefact of this test.
+    slow = LiveState()
+    slow.poll()
+    REAL_HZ = 52.0
+    with slow._lock:
+        slow.buffer.clear()
+        rows = [
+            {
+                "t": i / REAL_HZ,
+                "ax": 0.0, "ay": 0.0, "az": 1.0,
+                "gx": 0.0, "gy": 0.0, "gz": 0.0,
+                "IR_Value": 85000.0,
+            }
+            for i in range(RETUNE_MIN_SAMPLES + 100)
+        ]
+        slow.buffer.extend(rows)
+        measured = slow.buffer.measured_sampling_rate() or 0.0
+        slow._last_retune_check = 0.0   # bypass the throttle for the test
+        slow._retune_if_rate_differs()
+
+    check(
+        "a stream timestamped at 52 Hz is measured as such",
+        abs(measured - REAL_HZ) < 1.0,
+        f"{measured:.1f} Hz",
+    )
+    check(
+        "the timing consumers follow the measured rate",
+        abs(slow.tuned_sampling_rate - REAL_HZ) < 1.0,
+        f"tuned to {slow.tuned_sampling_rate:.1f} Hz",
+    )
+    check(
+        "the fall detector re-derived its windows from seconds, not samples",
+        abs(slow.detector.sampling_freq_hz - REAL_HZ) < 1.0
+        and slow.detector.free_fall_min_samples
+        == max(1, round(slow.detector._durations_s["free_fall_min"] * REAL_HZ)),
+        f"free-fall min {slow.detector.free_fall_min_samples} samples "
+        f"({slow.detector._durations_s['free_fall_min'] * 1000:.0f} ms)",
+    )
+    check(
+        "the pedometer and the heart rate follow too",
+        abs(slow.steps.fs - REAL_HZ) < 1.0 and abs(slow.heart.fs - REAL_HZ) < 1.0,
+        f"steps {slow.steps.fs:.1f} Hz, heart {slow.heart.fs:.1f} Hz",
+    )
+    check(
+        "the footer says the timings were re-tuned",
+        "re-tuned" in slow.model_label(),
+        slow.model_label(),
+    )
+
+    # A rate that is broken rather than merely different is left alone:
+    # re-tuning a pedometer to 4 Hz dresses up unusable data as working.
+    stalled = LiveState()
+    with stalled._lock:
+        stalled.buffer.clear()
+        stalled.buffer.extend([
+            {"t": i / 4.0, "ax": 0.0, "ay": 0.0, "az": 1.0,
+             "gx": 0.0, "gy": 0.0, "gz": 0.0, "IR_Value": 0.0}
+            for i in range(RETUNE_MIN_SAMPLES + 100)
+        ])
+        stalled._last_retune_check = 0.0
+        stalled._retune_if_rate_differs()
+    check(
+        "a 4 Hz link is treated as broken, not re-tuned to",
+        stalled._retuned_at is None
+        and abs(stalled.tuned_sampling_rate - SAMPLING_FREQ_HZ) < 1e-9,
+        f"tuned to {stalled.tuned_sampling_rate:.1f} Hz",
+    )
+    stalled.stop()
+    slow.stop()
+
+    # A rate inside the tolerance must not re-tune: re-tuning abandons a
+    # part-finished fall sequence, so doing it on jitter would quietly
+    # make falls harder to catch.
+    steady = LiveState()
+    steady._tuned_fs = 100.0
+    steady.poll()
+    time.sleep(0.4)
+    steady.poll()
+    check(
+        "ordinary jitter around 100 Hz does not re-tune",
+        steady._retuned_at is None,
+        f"tuned to {steady.tuned_sampling_rate:.1f} Hz",
+    )
+    steady.stop()
+
+    # -- reconnection ------------------------------------------------------
+    # The button's whole job is to recover a session that is running but
+    # useless. What must not happen is a reconnection that keeps samples
+    # from before the gap: a 400-sample window spanning a disconnection is
+    # a movement that never occurred, and the classifier cannot tell.
+    recon = LiveState()
+    recon.poll()
+    time.sleep(0.3)
+    recon.poll()
+    before = len(recon.buffer)
+    steps_before = recon.steps.steps
+    check(
+        "there is state to lose before reconnecting",
+        before > 0,
+        f"{before} samples, {steps_before} steps",
+    )
+
+    os.environ.pop("HAR_SERIAL_PORT", None)
+    message = recon.reconnect()
+    check(
+        "reconnecting with no device falls back to the simulator",
+        "simulator" in message.lower() or "no device" in message.lower(),
+        message,
+    )
+    check(
+        "the buffer is emptied, so no window can span the gap",
+        len(recon.buffer) < before or len(recon.buffer) == 0,
+        f"{before} -> {len(recon.buffer)} samples",
+    )
+    check(
+        "predictions from the old stream are discarded",
+        len(recon.predictions) == 0,
+        f"{len(recon.predictions)} held",
+    )
+    check("the step count restarts", recon.steps.steps == 0)
+    check("the fall latch is cleared", not recon.detector.alert_active)
+
+    recon.poll()
+    time.sleep(0.3)
+    stored_after = recon.poll()
+    check(
+        "it is reading again after reconnecting",
+        recon.is_running and stored_after > 0,
+        f"{stored_after} samples",
+    )
+    recon.stop()
 
     print()
     if failures:

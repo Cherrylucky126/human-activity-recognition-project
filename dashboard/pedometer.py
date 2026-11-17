@@ -99,14 +99,36 @@ class StepCounter:
         self.rearm_threshold = float(rearm_threshold_g)
         self.min_interval = float(min_step_interval_s)
 
+        # Kept so the rate can be re-tuned later: the decay below is
+        # per-sample, so it only means the intended time constant while
+        # self.fs matches the rate samples actually arrive at.
+        self._baseline_tau_s = float(baseline_tau_s)
+
         # Per-sample decay for the baseline average.
-        self._alpha = 1.0 - math.exp(-1.0 / (self.fs * float(baseline_tau_s)))
+        self._alpha = 1.0 - math.exp(-1.0 / (self.fs * self._baseline_tau_s))
 
         self._baseline: float | None = None
         self._armed = True
         self._steps = 0
         self._samples = 0
         self._last_step_sample = -10**9
+
+    def set_sampling_rate(self, sampling_freq_hz: float) -> None:
+        """Re-tune to the rate samples are really arriving at.
+
+        The step count is kept: the steps already counted happened, and
+        throwing them away would make a rate correction look like the
+        pedometer breaking.
+
+        Both rate-dependent quantities are refreshed - the baseline decay
+        here, and the minimum gap between steps, which ``update`` derives
+        from ``self.fs`` each time rather than caching.
+        """
+        fs = float(sampling_freq_hz)
+        if fs <= 0:
+            raise ValueError("sampling_freq_hz must be positive")
+        self.fs = fs
+        self._alpha = 1.0 - math.exp(-1.0 / (self.fs * self._baseline_tau_s))
 
     @property
     def steps(self) -> int:

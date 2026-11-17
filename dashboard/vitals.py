@@ -147,6 +147,21 @@ class HeartRateEstimator:
     def accepted(self) -> int:
         return self._accepted
 
+    def set_sampling_rate(self, sampling_freq_hz: float) -> None:
+        """Re-tune to the measured rate.
+
+        Everything rate-dependent is derived inside :meth:`estimate` from
+        ``self.fs``, so this is the whole change. It matters more here
+        than anywhere: a period misread by the ratio of the two rates
+        becomes a BPM wrong by that same ratio, and 2x a resting pulse is
+        about 130 - high, but not high enough for the 40-200 plausibility
+        check to reject it.
+        """
+        fs = float(sampling_freq_hz)
+        if fs <= 0:
+            raise ValueError("sampling_freq_hz must be positive")
+        self.fs = fs
+
     def estimate(self, ir_values) -> float | None:
         """Estimate BPM from a window of raw IR counts, most recent last.
 

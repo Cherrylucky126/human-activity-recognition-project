@@ -31,8 +31,10 @@ from dash import html
 
 try:
     from figures import class_color
+    from config import pretty_label
 except ImportError:  # pragma: no cover
     from dashboard.figures import class_color
+    from dashboard.config import pretty_label
 
 LOW_CONFIDENCE = 0.5
 """Below this the block is drawn faded.
@@ -81,7 +83,7 @@ def build(predictions, classes, seconds=60.0):
         blocks.append(
             html.Span(
                 className="tl-block" + (" tl-faded" if faded else ""),
-                title=f"{label.replace('_', ' ')} · {percent} · {clock}",
+                title=f"{pretty_label(label)} · {percent} · {clock}",
                 style={"backgroundColor": class_color(label, classes)},
             )
         )
@@ -96,7 +98,7 @@ def build(predictions, classes, seconds=60.0):
                     className="tl-swatch",
                     style={"backgroundColor": class_color(name, classes)},
                 ),
-                html.Span(name.replace("_", " ")),
+                html.Span(pretty_label(name)),
             ],
         )
         for name in classes
@@ -173,11 +175,21 @@ def _selftest() -> int:
         track.children[0].title,
     )
 
+    # The legend shows the reader's spelling; the colour beside it is
+    # still looked up with the model's. Expected values go through
+    # pretty_label so this cannot drift from the formatter.
     check(
         "the legend lists only the classes present, in the model's order",
         [k.children[1].children for k in legend.children]
-        == ["sitting", "standing", "walking"],
+        == [pretty_label(c) for c in ("sitting", "standing", "walking")],
         str([k.children[1].children for k in legend.children]),
+    )
+    check(
+        "formatting the legend did not change which colour a class gets",
+        all(
+            k.children[0].style["backgroundColor"] == class_color(raw, classes)
+            for k, raw in zip(legend.children, ("sitting", "standing", "walking"))
+        ),
     )
 
     old = [(now - 600, FakePrediction("laying", 0.99))]

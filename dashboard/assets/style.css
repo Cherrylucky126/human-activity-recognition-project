@@ -334,3 +334,146 @@ body {
 .tl-track {
   width: 100%;
 }
+
+/* --- Reconnect control ---------------------------------------------------- */
+
+.reconnect {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.reconnect-status {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+/* --- Model picker --------------------------------------------------------- */
+
+.model-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-picker-label {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.model-select {
+  min-width: 190px;
+}
+
+/* The demo bar is always in the DOM so its visibility can follow the live
+   source; .hidden is scoped per component here, not global. */
+.demo-bar.hidden {
+  display: none;
+}
+
+/* --- Masthead ------------------------------------------------------------- */
+
+.masthead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 20px;
+  padding-bottom: 14px;
+  margin-bottom: 4px;
+}
+
+.masthead-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.masthead-name {
+  font-size: 0.95rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.masthead-sub {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+/* The live indicator. Colour alone never carries the meaning: the
+   connection readout below states it in words, and the dot has a title. */
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--muted);
+}
+
+.dot-good   { background: #16a34a; box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.15); }
+.dot-waiting{ background: #d97706; box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.15); }
+.dot-bad    { background: var(--danger); box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.15); }
+
+/* --- Professional polish -------------------------------------------------- */
+
+.card {
+  box-shadow: 0 1px 2px rgba(15, 17, 21, 0.04);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .card {
+    box-shadow: none;
+  }
+}
+
+/* Every number on the page uses lining, fixed-width digits, so a value
+   changing ten times a second does not make the layout twitch. */
+.readout-value,
+.activity,
+.sensor-value {
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.activity {
+  font-weight: 650;
+}
+
+/* Visible keyboard focus. Dash's default is a faint browser outline that
+   disappears entirely against the dark theme. */
+.demo-button:focus-visible,
+.dismiss:focus-visible,
+.Select-control:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.demo-button {
+  transition: border-color 120ms ease, color 120ms ease;
+}
+
+/* The footer carries the model name and the heart-rate caveat; it should
+   read as a footnote, not as another row of content. */
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 24px;
+  margin-top: 28px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  font-size: 0.8rem;
+}
+
+@media (max-width: 720px) {
+  .masthead {
+    flex-direction: column;
+    gap: 4px;
+  }
+  .status-strip {
+    gap: 18px;
+  }
+  .reconnect {
+    margin-left: 0;
+  }
+}

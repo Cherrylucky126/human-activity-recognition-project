@@ -69,6 +69,11 @@ import importlib.util
 import os
 from dataclasses import dataclass
 
+try:
+    from config import SAMPLING_FREQ_HZ
+except ImportError:  # pragma: no cover - package-style import
+    from dashboard.config import SAMPLING_FREQ_HZ
+
 TRAINING_IR_MEAN: float | None = None
 TRAINING_IR_STD: float | None = None
 """The dataset-wide IR mean and standard deviation used during training.
@@ -86,20 +91,53 @@ Long enough to average over many beats and over posture changes, short
 enough to follow a strap being re-tightened.
 """
 
-# Tried in this order; the first that loads wins. Random forest first
-# because it is the model the submission names.
+# Tried in this order; the first that loads wins. SVM first, by the team's
+# choice on 16 November 2026 - it is the model the dashboard demonstrates,
+# and the footer prints whichever one is actually running, so the report and
+# the screen cannot disagree about it.
+#
+# The saved SVM is a CalibratedClassifierCV wrapping the support vector
+# classifier, which matters here: a bare SVC has no predict_proba unless it
+# was fitted with probability=True, and this page is mostly probability bars.
+# The calibration wrapper supplies them, and they are calibrated rather than
+# raw decision-function distances squashed into a range.
+#
+# HAR_MODEL overrides the order for one run, e.g. HAR_MODEL="random forest",
+# so comparing two models in front of an audience does not need a code edit.
 MODEL_CANDIDATES = (
-    ("random forest", "random-forest-builds/har_random_forest_100hz_4s.pkl",
-     "random-forest-builds/har_scaler_rf_100hz_4s.pkl"),
     ("SVM", "svm-builds/har_svm_100hz_4s.pkl",
      "svm-builds/har_scaler_svm_100hz_4s.pkl"),
+    ("random forest", "random-forest-builds/har_random_forest_100hz_4s.pkl",
+     "random-forest-builds/har_scaler_rf_100hz_4s.pkl"),
     ("logistic regression", "logistic-regression-builds/har_logistic_regression_100hz_4s.pkl",
      "logistic-regression-builds/har_scaler_lr_100hz_4s.pkl"),
     ("k-nearest neighbours", "knn-builds/har_knn_100hz_4s.pkl",
      "knn-builds/har_scaler_knn_100hz_4s.pkl"),
-    ("decision tree", "decision-tree-builds/har_decision_tree_100hz-4s.pkl",
-     "decision-tree-builds/har_scaler_rf.pkl"),
+    # Filenames corrected on 16 November 2026: this entry named
+    # har_decision_tree_100hz-4s.pkl and har_scaler_rf.pkl, neither of which
+    # exists, so the decision tree could never have loaded. It is last in the
+    # chain, so nothing noticed.
+    ("decision tree", "decision-tree-builds/har_decision_tree_100hz_4s.pkl",
+     "decision-tree-builds/har_scaler_dt_100hz_4s.pkl"),
 )
+
+
+def _preferred_order(candidates):
+    """``HAR_MODEL`` moves one candidate to the front, if it names one.
+
+    Matching is case-insensitive and on the display name ("SVM", "random
+    forest"). An unrecognised value is ignored rather than fatal: a typo in
+    an environment variable should not stop the dashboard predicting, and
+    the footer will show which model really loaded.
+    """
+    wanted = os.environ.get("HAR_MODEL", "").strip().lower()
+    if not wanted:
+        return candidates
+    chosen = [c for c in candidates if c[0].lower() == wanted]
+    if not chosen:
+        print(f"[inference] HAR_MODEL={wanted!r} matches no model; using the default order")
+        return candidates
+    return tuple(chosen) + tuple(c for c in candidates if c not in chosen)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 MODELS_ROOT = os.path.join(_HERE, os.pardir, "data-processing")
@@ -193,7 +231,7 @@ def load_model():
     except ImportError:
         return None, None, None, ["joblib is not installed - pip install -r requirements.txt"]
 
-    for name, model_rel, scaler_rel in MODEL_CANDIDATES:
+    for name, model_rel, scaler_rel in _preferred_order(MODEL_CANDIDATES):
         model_path = os.path.normpath(os.path.join(MODELS_ROOT, model_rel))
         scaler_path = os.path.normpath(os.path.join(MODELS_ROOT, scaler_rel))
         if not os.path.exists(model_path) or not os.path.exists(scaler_path):
@@ -208,6 +246,41 @@ def load_model():
         return name, model, scaler, notes
 
     return None, None, None, notes
+
+
+def model_names() -> list:
+    """Display names of every candidate, in chain order. Added for the picker."""
+    return [name for name, _m, _s in MODEL_CANDIDATES]
+
+
+def load_specific_model(name):
+    """Load one named model, ignoring the fallback chain.
+
+    Returns the same ``(name, model, scaler, notes)`` shape as
+    :func:`load_model`, but never silently substitutes a different model:
+    the point of asking for one by name is that you get that one or an
+    explanation. Falling back here would put a different model behind a
+    label claiming otherwise, which is the failure the footer exists to
+    prevent.
+    """
+    try:
+        import joblib
+    except ImportError:
+        return None, None, None, ["joblib is not installed"]
+
+    for cand, model_rel, scaler_rel in MODEL_CANDIDATES:
+        if cand.lower() != str(name).lower():
+            continue
+        model_path = os.path.normpath(os.path.join(MODELS_ROOT, model_rel))
+        scaler_path = os.path.normpath(os.path.join(MODELS_ROOT, scaler_rel))
+        if not os.path.exists(model_path) or not os.path.exists(scaler_path):
+            return None, None, None, [f"{cand}: file missing"]
+        try:
+            return cand, joblib.load(model_path), joblib.load(scaler_path), []
+        except Exception as exc:  # noqa: BLE001
+            return None, None, None, [f"{cand}: {type(exc).__name__}: {exc}"]
+
+    return None, None, None, [f"{name}: not a known model"]
 
 
 class ActivityClassifier:
@@ -257,6 +330,48 @@ class ActivityClassifier:
     def last(self) -> Prediction | None:
         return self._last
 
+    @property
+    def errors(self) -> int:
+        """Windows that raised during prediction.
+
+        Public because a non-zero value had no way of reaching the screen:
+        ``predict`` swallows the exception and ``self._last`` keeps the
+        previous answer, so a classifier failing on every window leaves the
+        page showing one confident label forever, with the clock still
+        ticking beside it. Nothing looks broken. The footer reads this.
+        """
+        return self._errors
+
+    def switch_to(self, name) -> str:
+        """Load a different model in place. Returns a line for the screen.
+
+        The old model stays in use if the new one will not load, because
+        a picker that silently leaves the page with no classifier is worse
+        than one that refuses and says why.
+
+        ``feature_order`` is re-read from the **new** scaler rather than
+        kept. Each model was saved with its own scaler, and the feature
+        order is the contract between them; reusing the previous one would
+        feed columns to the new model in the order the old one expected,
+        which produces confident nonsense rather than an error.
+        """
+        new_name, model, scaler, notes = load_specific_model(name)
+        if model is None or scaler is None:
+            return notes[0] if notes else f"could not load {name}"
+
+        order = []
+        names = getattr(scaler, "feature_names_in_", None)
+        if names is not None:
+            order = [str(n) for n in names]
+        if not order:
+            return f"{new_name}: its scaler does not record feature names"
+
+        self.name, self.model, self.scaler = new_name, model, scaler
+        self.feature_order = order
+        self.notes = notes
+        self._last = None
+        return f"switched to {new_name}"
+
     def note_ir(self, values) -> None:
         """Keep recent IR for the fallback scaling. Cheap; call it per poll."""
         if TRAINING_IR_MEAN is not None and TRAINING_IR_STD:
@@ -299,7 +414,9 @@ class ActivityClassifier:
         try:
             import numpy as np
 
-            features = self.extract(window.imu, self._scale_ir(window.ir), 100)
+            features = self.extract(
+                window.imu, self._scale_ir(window.ir), SAMPLING_FREQ_HZ
+            )
             row = [float(features[name]) for name in self.feature_order]
             vector = np.asarray([row], dtype=float)
             vector = np.nan_to_num(vector, nan=0.0, posinf=0.0, neginf=0.0)

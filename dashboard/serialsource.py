@@ -350,6 +350,29 @@ class SerialSource(SensorSource):
             with self._lock:
                 self._pending.append(sample)
 
+    def reopen(self, port=None) -> bool:
+        """Close whatever is open and connect again, optionally elsewhere.
+
+        Returns True if the port opened. Counters are deliberately kept -
+        dropped samples and bad lines across the session are still the
+        truth about the link - but the timestamp origin is reset, because
+        the new connection starts a new recording as far as the buffer is
+        concerned.
+        """
+        self.stop()
+        if port:
+            self.port = port
+        self._t0 = None
+        self._local_counter = 0
+        self._last_counter = None
+        self.last_error = None
+        try:
+            self.start()
+            return True
+        except Exception as exc:  # noqa: BLE001
+            self.last_error = f"{type(exc).__name__}: {exc}"
+            return False
+
     def _arrival_time(self) -> float:
         """Seconds since the first sample, measured, not assumed.
 
@@ -656,6 +679,46 @@ def _selftest() -> int:
         <= set(src.status()),
     )
 
+    # -- finding the device ------------------------------------------------
+    # The point of probing is that opening a port proves nothing. Windows
+    # hands out two ports per paired device and the silent one opens just
+    # as willingly as the live one, so a port only counts once samples
+    # have come off it.
+    data, total = probe_port("COM_DOES_NOT_EXIST", seconds=0.2)
+    check(
+        "a port that cannot be opened scores zero rather than raising",
+        (data, total) == (0, 0),
+        f"({data}, {total})",
+    )
+    check(
+        "no device is found when no port carries data",
+        find_device_port(preferred="COM_DOES_NOT_EXIST", seconds=0.2) is None,
+    )
+
+    # reopen() must survive being pointed at a port that will not open:
+    # that is exactly the state the Reconnect button is pressed in.
+    reopener = SerialSource("COM_DOES_NOT_EXIST")
+    check(
+        "reopen() reports failure instead of raising",
+        reopener.reopen() is False and reopener.last_error is not None,
+        reopener.last_error or "no error recorded",
+    )
+
+    lines = [f"{i},0.00,0.00,1.00,0.00,0.00,0.00,85000\n" for i in range(40)]
+    reusable = SerialSource("FAKE", serial_factory=lambda: FakePort(list(lines)))
+    check(
+        "reopen() reconnects a source that can open",
+        reusable.reopen() is True,
+    )
+    time.sleep(0.3)
+    got = reusable.read()
+    check(
+        "samples arrive after a reopen",
+        len(got) > 0,
+        f"{len(got)} samples",
+    )
+    reusable.stop()
+
     print()
     print(f"  accelerometer ceiling on this firmware: +/-{ACCEL_FULL_SCALE_G} g")
     print("  (see the module docstring: impacts clip at this ceiling, which")
@@ -667,6 +730,81 @@ def _selftest() -> int:
         return 1
     print("all checks passed")
     return 0
+
+
+def probe_port(port, baud=BAUD_RATE, seconds=1.5):
+    """Open ``port`` briefly and count lines that look like sensor data.
+
+    Returns ``(data_lines, total_lines)``. A port carrying the wrist unit
+    scores well on both; a port that opens but is silent scores (0, 0).
+
+    This exists because the port number is not stable. Windows assigns one
+    pair of COM ports per pairing, and re-pairing moves them: this project
+    has used COM5, COM6 and COM8 for the same device on the same laptop.
+    Hard-coding one guarantees a failure on the day it changes.
+
+    It also settles the incoming/outgoing question empirically. The usual
+    advice is that only the outgoing port carries data, and the team's own
+    decision-tree test script connects to what its comment calls the
+    incoming one. Rather than argue about which label is right, this opens
+    each candidate and keeps whichever actually delivers samples.
+    """
+    try:
+        import serial
+    except ImportError:  # pragma: no cover
+        return 0, 0
+
+    handle = None
+    try:
+        handle = serial.Serial(port, baud, timeout=0.3, dsrdtr=False, rtscts=False)
+        handle.reset_input_buffer()
+        handle.readline()  # a joined-mid-line first read is not evidence
+        data = total = 0
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            raw = handle.readline()
+            if not raw.strip():
+                continue
+            total += 1
+            fields = raw.count(b",") + 1
+            if fields in (FIELDS_PER_LINE, FIELDS_PER_LINE_NO_COUNTER):
+                data += 1
+        return data, total
+    except Exception:  # noqa: BLE001 - a port that will not open scores zero
+        return 0, 0
+    finally:
+        if handle is not None:
+            try:
+                handle.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def find_device_port(preferred=None, seconds=1.5):
+    """The port the wrist unit is actually on, or ``None``.
+
+    ``preferred`` is tried first, so naming a port in ``HAR_SERIAL_PORT``
+    still costs nothing when it is right. Everything else visible is then
+    probed, best score wins, and a port delivering no data is never
+    returned - being able to open a port is not evidence a device is on it,
+    which is the whole trap with Bluetooth's incoming/outgoing pair.
+    """
+    candidates = []
+    if preferred:
+        candidates.append(preferred)
+    for device, _description in list_ports():
+        if device not in candidates:
+            candidates.append(device)
+
+    best = None
+    best_score = 0
+    for port in candidates:
+        data, total = probe_port(port, seconds=seconds)
+        if data > best_score:
+            best, best_score = port, data
+        if best_score and port == preferred:
+            break  # the named port works; no reason to disturb the others
+    return best
 
 
 def _print_ports() -> int:

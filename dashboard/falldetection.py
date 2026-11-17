@@ -381,23 +381,21 @@ class FallDetector:
         self.impact_threshold_g = impact_threshold_g
         self.stillness_tolerance_g = stillness_tolerance_g
 
-        # Durations converted once, here, into sample counts.
-        to_samples = _duration_to_samples
-        self.free_fall_min_samples = to_samples(
-            free_fall_min_duration_s, self.sampling_freq_hz)
-        self.free_fall_max_samples = to_samples(
-            free_fall_max_duration_s, self.sampling_freq_hz)
-        self.impact_search_samples = to_samples(
-            impact_search_window_s, self.sampling_freq_hz)
-        self.settle_samples = to_samples(
-            post_impact_settle_s, self.sampling_freq_hz)
-        self.stillness_samples = to_samples(
-            stillness_duration_s, self.sampling_freq_hz)
-        self.max_sequence_samples = to_samples(
-            max_sequence_duration_s, self.sampling_freq_hz)
-        self.stillness_active_allowance_samples = int(
-            stillness_active_allowance * self.stillness_samples
-        )
+        # The durations in seconds are the real parameters; the sample
+        # counts below are only their expression at one sampling rate.
+        # Keeping the seconds means the detector can be re-tuned when the
+        # device turns out to be sending at a different rate, instead of
+        # measuring a 100 ms free fall as 190 ms and rejecting it.
+        self._durations_s = {
+            "free_fall_min": free_fall_min_duration_s,
+            "free_fall_max": free_fall_max_duration_s,
+            "impact_search": impact_search_window_s,
+            "settle": post_impact_settle_s,
+            "stillness": stillness_duration_s,
+            "max_sequence": max_sequence_duration_s,
+        }
+        self._stillness_active_allowance = stillness_active_allowance
+        self._recompute_sample_counts()
 
         if self.free_fall_max_samples < self.free_fall_min_samples:
             raise ValueError(
@@ -407,6 +405,44 @@ class FallDetector:
         self.reset()
 
     # -- lifecycle ---------------------------------------------------------
+    def _recompute_sample_counts(self) -> None:
+        """Express every duration in samples at the current rate."""
+        to_samples = _duration_to_samples
+        fs = self.sampling_freq_hz
+        d = self._durations_s
+        self.free_fall_min_samples = to_samples(d["free_fall_min"], fs)
+        self.free_fall_max_samples = to_samples(d["free_fall_max"], fs)
+        self.impact_search_samples = to_samples(d["impact_search"], fs)
+        self.settle_samples = to_samples(d["settle"], fs)
+        self.stillness_samples = to_samples(d["stillness"], fs)
+        self.max_sequence_samples = to_samples(d["max_sequence"], fs)
+        self.stillness_active_allowance_samples = int(
+            self._stillness_active_allowance * self.stillness_samples
+        )
+
+    def set_sampling_rate(self, sampling_freq_hz: float) -> None:
+        """Re-tune every duration to the rate samples really arrive at.
+
+        The thresholds in g are untouched - they are physics, not timing.
+        Only the windows change, which is what goes wrong when the device
+        does not send at the rate the detector assumed: at 52 Hz a
+        detector tuned for 100 Hz sees every duration as roughly double,
+        so a genuine free fall runs past ``free_fall_max_samples`` and the
+        sequence is discarded before the impact stage is ever reached.
+
+        Any part-finished sequence is abandoned, because its stage
+        boundaries were measured against the old counts and comparing them
+        to the new ones would mix two timebases. A latched alert survives:
+        it records something that already happened.
+        """
+        fs = float(sampling_freq_hz)
+        if fs <= 0:
+            raise ValueError("sampling_freq_hz must be positive")
+        self.sampling_freq_hz = fs
+        self.sample_period_s = 1.0 / fs
+        self._recompute_sample_counts()
+        self._clear_sequence()
+
     def reset(self) -> None:
         """Clear everything: the latched alert, the state machine and the log.
 
